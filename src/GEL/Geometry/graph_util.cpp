@@ -34,7 +34,8 @@ namespace Geometry {
     using NodeSetUnordered = unordered_set<NodeID>;
     using NodeQueue = queue<NodeID>;
     using NodeSetVec = vector<pair<double,NodeSet>>;
-
+    using ExpansionMap = std::vector<std::vector<AMGraph::NodeID>>;
+    using CapacityVecVec = std::vector<std::vector<size_t>>;
 
 
     struct SkeletonPQElem {
@@ -144,6 +145,37 @@ namespace Geometry {
             }
         }
         return component_vec;
+    }
+
+    std::vector<NodeSetUnordered> front_components(const AMGraph3D &g, const NodeSetUnordered &s) {
+        NodeSetUnordered s_visited;
+        vector<NodeSetUnordered> components_front;
+        NodeSetUnordered front_set; // Set of nodes that are a neighbour to a node in s.
+        for (auto n0 : s) { // This ensures we that visit every component of s.
+            if (s_visited.count(n0) == 0) { // n0 is a starting node in the component.
+                // Run a BFS.
+                NodeQueue Q;
+                Q.push(n0);
+                s_visited.insert(n0);
+                while(!Q.empty()) {
+                    NodeID n = Q.front();
+                    Q.pop();
+                    for (auto neighbour : g.neighbors(n)) {
+                        if (s_visited.count(neighbour) == 0) {
+                            s_visited.insert(neighbour);
+                            if (s.count(neighbour) == 0) {
+                                // Node is part of the front since it is not in s.
+                                front_set.insert(neighbour);
+                            } else {
+                                Q.push(neighbour);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return connected_components(g, front_set);
     }
 
     void saturate_graph(AMGraph3D& g, int hops, double dist_frac, double rad) {
@@ -256,6 +288,89 @@ namespace Geometry {
         
         g.cleanup();
         return total_work;
+    }
+
+    AMGraph3D graph_decimate(const AMGraph3D &g, size_t to_remove, vector<ExpansionMap>& exp_map, CapacityVecVec & cap_vec) {
+        auto priority = [&](NodeID a, NodeID b) { return -g.sqr_dist(a, b); };
+        priority_queue<SkeletonPQElem> Q;
+
+        AMGraph3D g_temp = g;
+        auto map_temp = vector<vector<NodeID>>(g.no_nodes());
+
+        int total_work = 0;
+        bool did_work = false;
+        do {
+            did_work = false;
+            Util::AttribVec<AMGraph::NodeID, int> touched(g_temp.no_nodes(), 0);
+            for (auto n0: g_temp.node_ids()) {
+                for (auto n1: g_temp.neighbors(n0)) {
+                    double pri = priority(n0, n1);
+                    Q.push(SkeletonPQElem(pri, n0, n1));
+                }
+            }
+
+            while (total_work < to_remove && !Q.empty()) {
+                auto skel_rec = Q.top();
+                Q.pop();
+                if (touched[skel_rec.n0] == 0 && touched[skel_rec.n1] == 0) { // Merge nodes.
+                    auto e = g_temp.find_edge(skel_rec.n0, skel_rec.n1);
+                    if (e != AMGraph::InvalidEdgeID) {
+                        g_temp.merge_nodes(skel_rec.n0, skel_rec.n1, true);
+                        // Merging nodes will remove n0 from the graph.
+                        map_temp[skel_rec.n1].push_back(skel_rec.n0);
+                        for (auto i: map_temp[skel_rec.n0]) {
+                            map_temp[skel_rec.n1].push_back(i);
+                        }
+                        touched[skel_rec.n0] = touched[skel_rec.n1] = 1;
+                        ++total_work;
+                        did_work = true;
+                    }
+                }
+            }
+        } while (total_work < to_remove && did_work);
+        auto map_result = vector<vector<NodeID>>(g.no_nodes() - total_work);
+        auto cap_result = vector<size_t>(g.no_nodes() - total_work,0);
+
+        // Perform a special case cleanup that maintains the expansion map.
+        AMGraph3D g_result; // new graph
+        map<AMGraph::NodeID, AMGraph::NodeID> node_map;
+        size_t node_new_index = 0;
+
+        // For all nodes that are not too close to previously visited nodes
+        // create a node in the new graph
+        for (auto n: g_temp.node_ids()) {
+            if (std::isnan(g_temp.pos[n][0])) {
+                node_map[n] = AMGraph::InvalidNodeID;
+            } else {
+                node_map[n] = g_result.add_node(g_temp.pos[n]);
+                g_result.node_color[node_map[n]] = g_temp.node_color[n];
+                for (auto i : map_temp[n]) {
+                    map_result[node_new_index].push_back(i);
+                    cap_result[node_new_index] += cap_vec.back()[i];
+                }
+                // Also add the node itself.
+                map_result[node_new_index].push_back(n);
+                cap_result[node_new_index] += cap_vec.back()[n];
+                ++node_new_index;
+            }
+        }
+        // For all edges in old graph, create a new edge
+        for (auto n: g_temp.node_ids())
+            if (node_map[n] != AMGraph::InvalidNodeID)
+                for (AMGraph::NodeID &nn: g_temp.neighbors(n)) {
+                    AMGraph::EdgeID e = g_result.connect_nodes(node_map[n], node_map[nn]);
+                    if (g_result.valid_edge_id(e)) {
+                        AMGraph::EdgeID e_old = g_temp.find_edge(n, nn);
+                        if (g_temp.valid_edge_id(e_old))
+                            g_result.edge_color[e] = g_temp.edge_color[e_old];
+                        else
+                            g_result.edge_color[e] = Vec3f(0);
+                    }
+                }
+
+        cap_vec.push_back(cap_result);
+        exp_map.push_back(map_result);
+        return g_result;
     }
 
     namespace  {
