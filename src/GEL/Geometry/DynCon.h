@@ -350,6 +350,12 @@ namespace Geometry {
 
         st_wrapper<T> stw = st_wrapper<T>(64);
 
+        size_t get_rep_tree(T v){
+            size_t rep = forest.find_tree(v);
+            if (rep == -1) return -1;
+            return stw.find_representative(rep);
+        }
+
         // Adds a non-tree edge with the given specifications
         void addNonTree(T v, T w, size_t e) {
             if (v > w) std::swap(v, w);
@@ -387,6 +393,84 @@ namespace Geometry {
             if (listW->empty()) forest.mark(w, false);
         }
 
+        bool disconnect(T v, T w){
+            if (v > w) std::swap(v, w);
+
+            // Early return if edge doesn't exist
+            auto search = edgeSet.find(UndirectedEdge<T>(v, w));
+            if (search == edgeSet.end()) return false;
+
+            auto e = search->second;
+
+            // Remove from edgeset
+            edgeSet.erase(ev[e]);
+
+            // If edge is non-tree, removal cannot break connectivity
+            if (!forest.edge_exists(v, w)) {
+                // But we must update adjacency lists
+                disconnect_nontree(e);
+                return false;
+            }
+
+            size_t V, W;
+
+            forest.cut(v, w, V, W);
+
+            return true;
+        }
+
+        bool reconnect(T v, T w){
+            if(is_connected(v,w)) return true;
+
+            size_t replacement = -1;
+
+            size_t V = get_rep_tree(v);
+            size_t W = get_rep_tree(w);
+
+            // Ensure that |V| < |W|. We only need to use V.
+            if (stw.access(V).size > stw.access(W).size) std::swap(V, W);
+
+            // If there are no adjacent non-tree edges in V no need for searching
+            if (!stw.hasAdjNT(V)) {
+                return false;
+            }
+
+            // Iterative level order traversal of V and non-tree edges
+            std::queue<size_t> queue;
+            size_t current = V;
+            queue.push(current);
+
+
+            while (replacement==-1 && !queue.empty()) { // Process
+                current = queue.front();
+                queue.pop();
+
+                if (stw.has_l(current) && stw.hasAdjNT(stw.lc(current))) queue.push(stw.lc(current));
+                if (stw.has_r(current) && stw.hasAdjNT(stw.rc(current))) queue.push(stw.rc(current));
+
+                if (stw.access(current).marked &&
+                    stw.access(current).u == stw.access(current).v) { // Node represents vertex with adjacent non-tree edges
+                    auto list = adjacencyLists.find(stw.access(current).u)->second;
+                    auto iter = list->begin();
+                    while (iter != list->end()) { // Destructive iteration of adjacent non-tree edges
+                        T candidate = *iter;
+                        iter++;
+                        auto c_e = edgeSet.find(UndirectedEdge<T>(stw.access(current).u, candidate))->second;
+                        if (stw.find_representative(forest.find_tree(candidate)) != V) { // Non-tree edge goes to W
+                            disconnect_nontree(c_e);
+                            replacement = c_e;
+                            forest.link(ev[c_e].first, ev[c_e].second);
+                            break;
+                        }
+                    }
+                }
+            }
+            if (replacement!=-1) {
+                return true;
+            }
+            return false;
+        }
+
     public:
         DynCon() : forest(EulerTourForest<T>(stw)) {}
 
@@ -420,71 +504,24 @@ namespace Geometry {
 
         // Returns false if no replacement edge found
         bool remove(T v, T w) {
-            if (v > w) std::swap(v, w);
+            if(!disconnect(v,w)) return true;
+            return reconnect(v,w);
+        }
 
-            // Early return if edge doesn't exist
-            auto search = edgeSet.find(UndirectedEdge<T>(v, w));
-            if (search == edgeSet.end()) return true;
-
-            auto e = search->second;
-
-            // Remove from edgeset
-            edgeSet.erase(ev[e]);
-
-            // If edge is non-tree, removal cannot break connectivity
-            if (!forest.edge_exists(v, w)) {
-                // But we must update adjacency lists
-                disconnect_nontree(e);
-                return true;
+        // Batch removes every edge adjacent to given vertex
+        // Returns false if neighbourhood was not reconnected
+        bool remove(T v, const std::vector<T>& adj){
+            std::vector<T> adj_tree;
+            for(auto w: adj){
+                if(disconnect(v,w)) adj_tree.push_back(w);
             }
-
-            size_t replacement = -1;
-
-            size_t V, W;
-
-            forest.cut(v, w, V, W);
-
-            // Ensure that |V| < |W|. We only need to use V.
-            if (stw.access(V).size > stw.access(W).size) std::swap(V, W);
-
-            // If there are no adjacent non-tree edges in V no need for searching
-            if (!stw.hasAdjNT(V)) {
-                return false;
-            }
-
-            // Iterative level order traversal of V and non-tree edges
-            std::queue<size_t> queue;
-            size_t current = V;
-            queue.push(current);
-
-            while (replacement==-1 && !queue.empty()) { // Process
-                current = queue.front();
-                queue.pop();
-
-                if (stw.has_l(current) && stw.hasAdjNT(stw.lc(current))) queue.push(stw.lc(current));
-                if (stw.has_r(current) && stw.hasAdjNT(stw.rc(current))) queue.push(stw.rc(current));
-
-                if (stw.access(current).marked &&
-                    stw.access(current).u == stw.access(current).v) { // Node represents vertex with adjacent non-tree edges
-                    auto list = adjacencyLists.find(stw.access(current).u)->second;
-                    auto iter = list->begin();
-                    while (iter != list->end()) { // Destructive iteration of adjacent non-tree edges
-                        T candidate = *iter;
-                        iter++;
-                        auto c_e = edgeSet.find(UndirectedEdge<T>(stw.access(current).u, candidate))->second;
-                        if (stw.find_representative(forest.find_tree(candidate)) != V) { // Non-tree edge goes to W
-                            disconnect_nontree(c_e);
-                            replacement = c_e;
-                            forest.link(ev[c_e].first, ev[c_e].second);
-                            break;
-                        }
-                    }
+            uint reconnected = 0;
+            for(uint i=0; i<adj_tree.size(); ++i){
+                for(uint j=i+1; j<adj_tree.size(); ++j){
+                    if(reconnect(adj_tree[i],adj_tree[j])) reconnected++;
                 }
             }
-            if (replacement!=-1) {
-                return true;
-            }
-            return false;
+            return reconnected == adj_tree.size();
         }
 
         // Returns true if there exists a path going between v and w.
@@ -495,9 +532,8 @@ namespace Geometry {
 
         // Returns representative of component of v
         T get_representative(T v) {
-            size_t rep = forest.find_tree(v);
-            if (rep == -1) return -1;
-            rep = stw.find_representative(rep);
+            auto rep = get_rep_tree(v);
+            if(rep == -1) return -1;
             return stw.access(rep).u;
         }
 

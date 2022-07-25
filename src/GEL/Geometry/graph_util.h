@@ -53,10 +53,15 @@ namespace Geometry {
     /// Contracts edges in the graph g shorter than dist_thresh. A priority queue is used to contract shorter edges first.
     int graph_edge_contract(AMGraph3D& g, double dist_thresh);
 
-    /** Returns the graph resulting from contracting to_remove edges from g.
-     *  Also supplies an expansion map and capacities.
-     */
-    AMGraph3D graph_decimate(const AMGraph3D &g, size_t to_remove, std::vector<ExpansionMap>& exp_map, CapacityVecVec & cap_vec);
+    struct SkeletonPQElem {
+        double pri;
+        Geometry::AMGraph::NodeID n0, n1;
+        SkeletonPQElem(double _pri, Geometry::AMGraph::NodeID _n0, Geometry::AMGraph::NodeID _n1);
+
+        bool operator < (const SkeletonPQElem& pq1) const {
+            return pri < pq1.pri;
+        }
+    };
 
     /// This function unceremoniously removes leaf vertices if they share an edge with a vertex that has valence greater than two.
     void prune(AMGraph3D& g);

@@ -91,7 +91,7 @@ namespace Geometry {
      */
     Separator
     local_separator(const AMGraph3D &g, NodeID n0, double quality_noise_level, int optimization_steps,
-                    long growth_threshold = -1);
+                    uint growth_threshold = -1);
 
 
     enum class SamplingType {
@@ -155,7 +155,11 @@ namespace Geometry {
      can sometime generate skeletons of slightly lower quality. It also depends on a threshold that
      can be difficult to determine an optimal value for.
      */
-    NodeSetVec experimental_local_separator();
+    NodeSetVec multiscale_local_separators(AMGraph3D &g, SamplingType sampling = SamplingType::Advanced,
+                                uint grow_threshold = 64,
+                                double quality_noise_level = 0.09,
+                                int optimization_steps = 0);
+
 
     /**
      @brief Convert a vector of (non-overlapping) node sets to a skeleton graph
@@ -206,10 +210,6 @@ namespace Geometry {
      * @return The median size of a sample of separators before trimming.
      */
     ulong thinness_measure(const AMGraph3D &g, uint samples, double quality_noise_level, int optimization_steps);
-
-    std::vector<Separator>
-    multiscale_local_separators(AMGraph3D &g, double quality_noise_level, int optimization_steps);
-
 
 }
 #endif /* graph_skeletonize_hpp */

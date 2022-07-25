@@ -680,6 +680,14 @@ namespace Geometry {
             optimize_separator(g, separator, front_components);
     }
 
+    NodeSetVec sepvec_to_nsv(const std::vector<Separator>& v){
+        NodeSetVec res;
+        res.reserve(v.size());
+        for(const auto& sep:v){
+            res.push_back({sep.quality,sep.sigma});
+        }
+        return res;
+    }
 
     /** For a given graph, g,  and a given node n0, we compute a local separator.
      The algorithm proceeds in a way similar to Dijkstra, finding a set of nodes separator such that there is anoter set of nodes, front,
@@ -690,7 +698,7 @@ namespace Geometry {
      The final node set returned is then thinned to the minimal separator.
      */
     Separator local_separator(const AMGraph3D &g, NodeID n0, double quality_noise_level, int optimization_steps,
-                              long growth_threshold) {
+                              uint growth_threshold) {
 
         auto front_size_ratio = [](const vector<int> &fc) {
             if (fc.size() < 2)
@@ -776,10 +784,7 @@ namespace Geometry {
             }
 
             // Remove edges connecting n to front
-            for (auto m: g.neighbors(n)) {
-                if (F.count(m) == 0) continue;
-                conn.remove(n, m);
-            }
+            conn.remove(n,g.neighbors(n));
 
             // Maintain representatives
             NodeSetUnordered Rnew;
@@ -918,11 +923,211 @@ namespace Geometry {
         return node_set_vec_global;
     }
 
-    NodeSetVec experimental_local_separator() {
-        // TODO: Implement
+    NodeSetVec multiscale_local_separators(AMGraph3D &g, SamplingType sampling, uint grow_threshold,double quality_noise_level, int optimization_steps) {
+        // Because we are greedy: all cores belong to this task!
+        const int CORES = thread::hardware_concurrency();
 
-        // TODO: Maybe try some hybrid stuff.
-        return Geometry::NodeSetVec();
+        Util::AttribVec<NodeID, uint> touched(g.no_nodes(), 0);
+
+        size_t count_computed = 0;
+        size_t count_found = 0;
+        size_t count_packed = 0;
+
+        long time_creating_separators = 0, time_shrinking = 0, time_expanding = 0, time_packing = 0, time_filtering = 0;
+        auto timer = hrc::now();
+
+        vector<thread> threads(CORES);
+
+        // Each core will have its own vector of Separators in which to store
+        // separators.
+        vector<vector<Separator> > separator_vv(CORES);
+        auto create_separators = [&](int core, const AMGraph3D &g) {
+            auto &separator_v = separator_vv[core];
+            for (auto n: g.node_ids()) {
+                double probability = 1.0 / int_pow(2.0, touched[n]);
+                if (n % CORES == core && (sampling==SamplingType::None || rand() <= probability * RAND_MAX)) {
+                    ++count_computed;
+                    auto separator = local_separator(g, n, quality_noise_level, optimization_steps,
+                                                                grow_threshold);
+                    if (separator.sigma.size() > 0) {
+                        separator.id = count_found;
+                        ++count_found;
+                        separator_v.push_back(separator);
+                        if (sampling!=SamplingType::None) {
+                            for (auto m: separator.sigma) {
+                                touched[m]++;
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        auto shrink_expand = [&](
+                int core,
+                const vector<Separator> &node_set_vec_global,
+                const AMGraph3D &g_current,
+                const AMGraph3D &g_next,
+                const vector<vector<NodeID>> &exp_map_current) {
+            auto &current_level_separator_vec = separator_vv[core];
+            for (unsigned int i = 0; i < node_set_vec_global.size(); i++) {
+                const auto &sep = node_set_vec_global[i];
+                if (i % CORES == core) {
+                    auto local_timer = hrc::now();
+
+                    // Do not include if separator is a leaf. Leaves in the input graph is still included since we do not expand on that level.
+                    if (sep.sigma.size() == 1 && g_current.neighbors(*sep.sigma.begin()).size() == 1) {
+                        continue;
+                    }
+
+                    // Expand.
+
+                    set<NodeID> expanded_sep;
+                    for (NodeID old_v: sep.sigma) {
+                        for (NodeID new_v: exp_map_current[old_v]) expanded_sep.insert(new_v);
+                    }
+
+                    time_expanding += (hrc::now() - local_timer).count(); // TODO: This might be a race condition.
+                    local_timer = hrc::now();
+
+                    // Shrink.
+
+                    // Convert to NodeSetUnordered. Unordered set is needed for some functions.
+                    NodeSetUnordered Sigma;
+                    for (auto n: expanded_sep) {
+                        Sigma.insert(n);
+                    }
+                    const auto &g_next_level = g_next;
+                    Vec3d centre = approximate_bounding_sphere(g_next_level, Sigma).first;
+                    auto C_F = front_components(g_next_level, Sigma);
+
+                    shrink_separator(g_next_level, Sigma, C_F, centre, optimization_steps);
+
+                    double quality;
+                    C_F = front_components(g_next_level, Sigma);
+
+                    size_t min = -1;
+                    size_t max = 0;
+                    for (const auto &c: C_F) {
+                        if (c.size() < min) min = c.size();
+                        if (c.size() > max) max = c.size();
+                    }
+                    quality = (double) min / max;
+
+                    // Convert to NodeSet.
+                    Separator trimmed_sep = sep; // We do this to copy over new other information stored in the separator.
+                    trimmed_sep.quality = quality;
+                    trimmed_sep.sigma.clear();
+                    for (auto n: Sigma) {
+                        trimmed_sep.sigma.insert(n);
+                        if (sampling==SamplingType::Advanced) touched[n]++;
+                    }
+                    current_level_separator_vec.push_back(trimmed_sep);
+                    time_shrinking += (hrc::now() - local_timer).count(); //TODO: Also race condition.
+                }
+            }
+        };
+
+        auto t1 = hrc::now();
+
+        auto msg = Geometry::multiscale_graph(g, grow_threshold, true);
+
+        auto t2 = hrc::now();
+
+        vector<Separator> separator_vector_global;
+
+        for (int level = msg.layers.size() - 1; level >= 0; --level) {
+            timer = hrc::now();
+            const auto &g_current = msg.layers[level];
+            const auto &exp_map_current = msg.expansion_map_vec[level];
+
+            // Determine separators
+            for (int i = 0; i < CORES; ++i)
+                threads[i] = thread(create_separators, i, g_current);
+
+            for (int i = 0; i < CORES; ++i)
+                threads[i].join();
+
+            for (auto &separator_v: separator_vv)
+                for (auto &sep: separator_v) {
+                    sep.grouping = level;
+                    separator_vector_global.push_back(sep);
+                }
+
+            for (auto &nsv: separator_vv) {
+                nsv.clear();
+            }
+            time_creating_separators += (hrc::now() - timer).count();
+
+            // Should do nothing on first layer.
+            //size_t temp = node_set_vec_global.size();
+            timer = hrc::now();
+            separator_vector_global = filter_duplicate_separators(separator_vector_global);
+            time_filtering += (hrc::now() - timer).count();
+            //cout << "Filtered: " <<  temp - node_set_vec_global.size() << endl;
+
+            // Pack
+            timer = hrc::now();
+            capacity_packing(g_current, separator_vector_global, true, msg.capacity_vec_vec[level]);
+            time_packing += (hrc::now() - timer).count();
+
+            // Cleanup touched
+            for (uint i = 0; i < touched.size(); ++i) {
+                touched[i] = 0;
+            }
+
+            // Expand and shrink.
+            if (level != 0) { // Nothing to expand to on final level.
+                //touched = (g.no_nodes(),0);
+
+                for (int i = 0; i < CORES; ++i)
+                    threads[i] = thread(shrink_expand, i, separator_vector_global, g_current, msg.layers[level - 1],
+                                        exp_map_current);
+
+                for (int i = 0; i < CORES; ++i)
+                    threads[i].join();
+
+                separator_vector_global.clear();
+                for (const auto &sep_v: separator_vv)
+                    for (const auto &sep: sep_v) {
+                        separator_vector_global.push_back(sep);
+                    }
+
+                for (auto &nsv: separator_vv) {
+                    nsv.clear();
+                }
+            }
+        }
+
+        count_packed = separator_vector_global.size();
+
+        auto t3 = hrc::now();
+
+        cout << "#####################" << endl;
+        cout << "Computed " << count_computed << " separators" << endl;
+        cout << "Found " << count_found << " separators" << endl;
+        cout << "Packed " << count_packed << " separators" << endl;
+        cout << "#####################" << endl;
+        cout << "Building multilayer graph: " << (t2 - t1).count() * 1e-9 << endl;
+        cout << "Creating separators: " << (t3 - t2).count() * 1e-9 << endl;
+        cout << "#####################" << endl;
+        cout << "Creating initial separators: " << time_creating_separators * 1e-9 << endl;
+        cout << "Packing separators: " << time_packing * 1e-9 << endl;
+        cout << "Expanding separators: " << time_expanding * 1e-9 << endl;
+        cout << "Shrinking separators: " << time_shrinking * 1e-9 << endl;
+        cout << "Filtering separators: " << time_filtering * 1e-9 << endl;
+        cout << "#####################" << endl;
+
+        // Color the node sets selected by packing, so we can get a sense of the
+        // selection.
+        NodeSetVec node_set_color_vec;
+        for (const auto &sep: separator_vector_global) {
+            node_set_color_vec.push_back(make_pair(sep.quality, sep.sigma));
+        }
+
+        color_graph_node_sets(g, node_set_color_vec);
+
+        return sepvec_to_nsv(separator_vector_global);
     }
 
     MultiScaleGraph multiscale_graph(const AMGraph3D &g, int threshold, bool recursive) {
@@ -936,6 +1141,94 @@ namespace Geometry {
         size_t edges_to_remove = 0;
         size_t vertex_count;
 
+        Util::AttribVec<NodeID, int> touched;
+        priority_queue<SkeletonPQElem> Q;
+
+
+        auto graph_decimate = [&](const AMGraph3D& g, size_t to_remove)->AMGraph3D {
+            auto priority = [&](const NodeID& a, const NodeID& b)->double {return -g.sqr_dist(a,b);};
+            AMGraph3D g_temp = g;
+            auto map_temp = vector<vector<NodeID>>(g.no_nodes());
+
+            int total_work = 0;
+            bool did_work;
+            do{
+                did_work = false;
+                if(Q.empty()) {
+                    for (auto n0: g_temp.node_ids()) {
+                        for (auto n1: g_temp.neighbors(n0)) {
+                            double pri = priority(n0, n1);
+                            Q.push(SkeletonPQElem(pri, n0, n1));
+                        }
+                    }
+                    touched = (g_temp.no_nodes(),0);
+                }
+
+                while(total_work < to_remove && !Q.empty()){
+                    auto skel_rec = Q.top();
+                    Q.pop();
+                    if(touched[skel_rec.n0] == 0 && touched[skel_rec.n1] == 0) { // Merge vertices
+                        auto e = g_temp.find_edge(skel_rec.n0, skel_rec.n1);
+                        if(e != AMGraph::InvalidEdgeID){
+                            g_temp.merge_nodes(skel_rec.n0, skel_rec.n1);
+                            // Merging removes n0 from graph
+                            map_temp[skel_rec.n1].push_back(skel_rec.n0);
+                            for(auto i: map_temp[skel_rec.n0]){
+                                map_temp[skel_rec.n1].push_back(i);
+                            }
+                            touched[skel_rec.n0] = touched[skel_rec.n1] = 1;
+                            ++total_work;
+                            did_work = true;
+                        }
+                    }
+                }
+            } while (total_work < to_remove && did_work);
+            auto map_result = vector<vector<NodeID>>(g.no_nodes() - total_work);
+            auto cap_result = vector<size_t>(g.no_nodes() - total_work, 0);
+
+            // Perform a special case cleanup that maintains expansion map
+            AMGraph3D g_result; // New graph
+            map<NodeID,NodeID> node_map;
+            size_t node_new_index = 0;
+
+            // For all nodes that are not too close to previously visited nodes
+            // create a new node in the new graph
+            for(auto n: g_temp.node_ids()){
+                if (std::isnan(g_temp.pos[n][0])) {
+                    node_map[n] = AMGraph::InvalidNodeID;
+                } else {
+                    node_map[n] = g_result.add_node(g_temp.pos[n]);
+                    g_result.node_color[node_map[n]] = g_temp.node_color[n];
+                    for (auto i : map_temp[n]) {
+                        map_result[node_new_index].push_back(i);
+                        cap_result[node_new_index] += msg.capacity_vec_vec.back()[i];
+                    }
+                    // Also add the node itself.
+                    map_result[node_new_index].push_back(n);
+                    cap_result[node_new_index] += msg.capacity_vec_vec.back()[n];
+                    ++node_new_index;
+                }
+            }
+
+            // For all edges in old graph, create a new edge
+            for (auto n: g_temp.node_ids())
+                if (node_map[n] != AMGraph::InvalidNodeID)
+                    for (AMGraph::NodeID &nn: g_temp.neighbors(n)) {
+                        AMGraph::EdgeID e = g_result.connect_nodes(node_map[n], node_map[nn]);
+                        if (g_result.valid_edge_id(e)) {
+                            AMGraph::EdgeID e_old = g_temp.find_edge(n, nn);
+                            if (g_temp.valid_edge_id(e_old))
+                                g_result.edge_color[e] = g_temp.edge_color[e_old];
+                            else
+                                g_result.edge_color[e] = Vec3f(0);
+                        }
+                    }
+
+            msg.capacity_vec_vec.push_back(cap_result);
+            msg.expansion_map_vec.push_back(map_result);
+            return g_result;
+        };
+
         graph_current = g;
 
         // The first layer is always the input graph.
@@ -947,35 +1240,21 @@ namespace Geometry {
             msg.capacity_vec_vec[0][i] = 1;
         }
 
-        /* TODO instead of calling graph decimate, we should do the edge contractions directly.
-            This would also allow for better results when using recursive method as the "touched" vector can be maintained
-            between iterations.
-         */
-
         while (graph_current.no_nodes() > threshold) {
             vertex_count = graph_current.no_nodes();
             if (recursive) {
                 edges_to_remove = min(graph_current.no_nodes() / 2, graph_current.no_nodes() - threshold);
-                graph_current = graph_decimate(graph_current, edges_to_remove, msg.expansion_map_vec,
-                                               msg.capacity_vec_vec);
+                graph_current = graph_decimate(graph_current,edges_to_remove);
             } else {
                 edges_to_remove = min(edges_to_remove + (graph_current.no_nodes() / 2),
                                       g.no_nodes() - threshold);
-                graph_current = graph_decimate(g, edges_to_remove, msg.expansion_map_vec, msg.capacity_vec_vec);
+                graph_current = graph_decimate(g, edges_to_remove);
             }
             if (vertex_count == graph_current.no_nodes()) break; // Was unable to remove any edges.
 
             msg.layers.push_back(graph_current);
-        }
 
-        /*
-        // Print the size of each layer.
-        cout << "Multilayer graph size:" << endl;
-        for (const auto &i: msg.layers) {
-            cout << i.no_nodes() << "\t";
         }
-        cout << endl;
-         */
 
         return msg;
     }
