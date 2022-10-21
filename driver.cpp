@@ -20,7 +20,6 @@ using Graph = Geometry::AMGraph3D;
 using SamplingType = Geometry::SamplingType;
 
 void skeletonize(Graph &g, Graph* skel_ptr, SamplingType sampling){
-    std::cout << "Generating skeleton" << std::endl;
 
     auto t0 = std::chrono::high_resolution_clock::now();
 
@@ -110,6 +109,10 @@ int main(int argc, char* argv[]){
 
     success = !g.empty();
     if (!success) std::cout << "ERROR : Graph is empty!" << std::endl;
+
+    std::cout << "Generating skeleton: " <<path<<" saved at "<<out_path<< std::endl;
+    std::cout << "Vertices: "<<g.no_nodes()<<"\n Edges: "<<g.no_edges()<<std::endl;
+    std::cout << "#####################" << std::endl;
 
     // Make skeleton
     auto skel = Geometry::AMGraph3D(); // Target graph
