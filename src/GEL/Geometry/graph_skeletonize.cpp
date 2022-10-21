@@ -20,18 +20,38 @@
 #include <GEL/Geometry/graph_util.h>
 #include <GEL/Geometry/DynCon.h>
 #include <GEL/Geometry/graph_skeletonize.h>
-
+#include <GEL/Geometry/graph_io.h>
 
 using namespace std;
 using namespace CGLA;
 using namespace Util;
 using namespace Geometry;
 
+#ifndef MULTI_SHRINK
+#define MULTI_SHRINK 0
+#endif
+#ifndef THICC_SEP
+#define THICC_SEP 0
+#endif
+#ifndef DYNCON
+#define DYNCON Treap
+#endif
+#ifndef RECALC
+#define RECALC 0
+#endif
+#ifndef CORE_TEST
+#define CORE_TEST 1
+#endif
+#ifndef CORE_TEST_SEC
+#define CORE_TEST_SEC 1
+#endif
+
 namespace Geometry {
 
     using NodeID = AMGraph::NodeID;
     using NodeSetUnordered = unordered_set<NodeID>;
     using NodeQueue = queue<NodeID>;
+    using SepVec = vector<Separator>;
 
     void greedy_weighted_packing(const AMGraph3D &g, NodeSetVec &node_set_vec, bool normalize) {
 
@@ -80,7 +100,7 @@ namespace Geometry {
     }
 
     // Returns a vector of separators without duplicates.
-    std::vector<Separator> filter_duplicate_separators(const vector<Separator> &separators) {
+    SepVec filter_duplicate_separators(const SepVec &separators) {
         // Works by inserting then extracting from a hashset.
         auto sep_hash = [](const Separator &a) {
             // The good
@@ -113,7 +133,7 @@ namespace Geometry {
         }
 
         // Extract.
-        vector<Separator> filtered_separators;
+        SepVec filtered_separators;
         filtered_separators.reserve(separators_set.size());
         for (auto &sep: separators_set) {
             filtered_separators.push_back(sep);
@@ -123,20 +143,25 @@ namespace Geometry {
 
     // Adds leniency to packing by allowing overlapped usage of vertices up to some capacity
     // Is otherwise the same as greedy_weighted_packing but uses a Separator vector instead of NodeSetVec.
-    void capacity_packing(const AMGraph3D &g, vector<Separator> &separator_vec, bool normalize,
+    void capacity_packing(const AMGraph3D &g, SepVec &separator_vec, bool normalize,
                           const vector<size_t> &capacity) {
 
         vector<pair<double, int>> node_set_index;
+        vector<NodeSet> ordered_seps;
+        ordered_seps.reserve(separator_vec.size());
+        for(auto & s : separator_vec){
+            ordered_seps.push_back(order(s.sigma));
+        }
 
         if (normalize) {
             vector<double> opportunity_cost(separator_vec.size(), 0.0);
 
             for (int i = 0; i < separator_vec.size(); ++i) {
                 const double &w_i = separator_vec[i].quality;
-                const auto &ns_i = separator_vec[i].sigma;
+                const auto &ns_i = ordered_seps[i];
                 for (int j = i + 1; j < separator_vec.size(); ++j) {
                     const double &w_j = separator_vec[j].quality;
-                    const auto &ns_j = separator_vec[j].sigma;
+                    const auto &ns_j = ordered_seps[j];
                     int matches = test_intersection(ns_i, ns_j);
                     if (matches > 0) {
                         opportunity_cost[i] += w_j;
@@ -153,7 +178,7 @@ namespace Geometry {
             }
 
         sort(begin(node_set_index), end(node_set_index), greater<pair<double, int>>());
-        vector<Separator> node_set_vec_new;
+        SepVec node_set_vec_new;
         AttribVec<NodeID, size_t> set_index(g.no_nodes(), 0); // Counts usage
         for (const auto&[norm_weight, ns_idx]: node_set_index) {
             const auto &node_set = separator_vec[ns_idx].sigma;
@@ -658,33 +683,109 @@ namespace Geometry {
         }
     }
 
+    double separator_quality(const AMGraph3D& g, const NodeSetUnordered& s){
+        uint min = -1;
+        uint max = 0;
+        for (const auto &d: front_components(g,s)) {
+            auto temp = d.size();
+            if (temp < min) min = temp;
+            if (temp > max) max = temp;
+        }
+        return (double) min / max;
+    }
 
-    void shrink_separator(const AMGraph3D &g,
+    // TODO: Might not belong here
+    pair<Vec3d,Vec3d> approx_plane_fit(const AMGraph3D& g,const NodeSetUnordered& ns, const uint k){
+        Vec3d p_q;
+        Vec3d p_n;
+        Vec3d a;
+        Vec3d b;
+        Vec3d c;
+        double min_score = -1;
+        double score;
+        double dist;
+        uint m = ns.size();
+        vector<Vec3d> p;
+        p.reserve(m);
+        for(auto n: ns){
+            p_q += g.pos[n]/m; // Get average position
+            p.push_back(g.pos[n]);
+        }
+        for(uint i=0; i<k; ++i){ // Guess and evaluate
+            score = 0;
+
+            // Pick two
+            a = p[rand()%m];
+            b = p[rand()%m];
+            
+            // Calculate normal
+            c = cross(a,b);
+            c.normalize();
+            // Evaluate score
+            for(auto n: p){
+                dist = dot(c,n);
+                score += dist*dist;
+            }
+            // Update
+            if(score < min_score || min_score == -1){
+                p_n = c;
+            }
+        }
+
+        return {p_q,p_n};
+    }
+
+    void thicken_separator(const AMGraph3D& g, NodeSetUnordered& sigma){
+        auto C_F = front_components(g, sigma);
+        for(const auto& c: C_F){
+            NodeSetUnordered sigma_thick = sigma;
+            for(auto e: c) sigma_thick.insert(e);
+            if(front_components(g,sigma_thick).size() == 2) std::swap(sigma,sigma_thick);
+        }
+    }
+
+    SepVec adjacent_separators(const AMGraph3D& g, const NodeSetUnordered& sigma){
+        auto fc = front_components(g,sigma);
+        SepVec res;
+        vector<NodeSetUnordered> nsv(fc.size());
+        for(auto s: sigma){
+            for(auto n: g.neighbors(s)){
+                for(uint c=0; c<fc.size(); ++c) if(fc[c].count(n)) nsv[c].insert(s);
+            }
+        }
+        for(auto& c: nsv){
+            res.push_back({separator_quality(g,c),c});
+        }
+        return res;
+    }
+
+    Separator shrink_separator(const AMGraph3D &g,
                           NodeSetUnordered &separator,
-                          vector<NodeSetUnordered> &front_components,
                           const Vec3d &sphere_centre, int opt_steps) {
+        auto fc = front_components(g,separator);
+
         // Next, we thin out the separator until it becomes minimal (i.e. removing one more node
         // would make it cease to be a separator. We remove nodes iteratively and always remove the
         // last visited nodes first.
-        const auto separator_orig = separator;
-        const auto front_components_orig = front_components;
 
         auto smpos = g.pos;
         AttribVec<NodeID, double> center_dist;
-        for (auto n: separator_orig)
+        for (auto n: separator)
             center_dist[n] = sqr_length(smpos[n] - sphere_centre);
         smooth_attribute(g, smpos, separator, sqrt(separator.size()));
-        node_set_thinning(g, separator, front_components, center_dist);
+        node_set_thinning(g, separator, fc, center_dist);
 
         for (int iter = 0; iter < opt_steps; ++iter)
-            optimize_separator(g, separator, front_components);
+            optimize_separator(g, separator, fc);
+
+        return {separator_quality(g,separator),separator};
     }
 
     NodeSetVec sepvec_to_nsv(const std::vector<Separator>& v){
         NodeSetVec res;
         res.reserve(v.size());
         for(const auto& sep:v){
-            res.push_back({sep.quality,sep.sigma});
+            res.push_back({sep.quality,order(sep.sigma)});
         }
         return res;
     }
@@ -698,7 +799,7 @@ namespace Geometry {
      The final node set returned is then thinned to the minimal separator.
      */
     Separator local_separator(const AMGraph3D &g, NodeID n0, double quality_noise_level, int optimization_steps,
-                              uint growth_threshold) {
+                              uint growth_threshold, const Vec3d* static_centre) {
 
         auto front_size_ratio = [](const vector<int> &fc) {
             if (fc.size() < 2)
@@ -707,8 +808,7 @@ namespace Geometry {
             return double(*min) / *max;
         };
         // Create dynamic connectivity structure
-        DynCon<NodeID> conn = DynCon<NodeID>();
-
+        DynCon<NodeID, DYNCON> con = DynCon<NodeID,DYNCON>();
         // Create the separator node set and the temporary node set (used during computation)
         // The tmp sets are needed because of persistence. Whenever we have had two connected components
         // in front for a number of iterations = persistence, we go back to the original separator.
@@ -718,16 +818,16 @@ namespace Geometry {
         // so if there is only one neighbor, we are done here.
         auto N = g.neighbors(n0);
         if (N.size() == 0)
-            return {0.0, NodeSet()};
+            return {0.0, NodeSetUnordered ()};
         if (N.size() == 1)
-            return {0.0, NodeSet({n0}), 0, -1, 1};
+            return {0.0, NodeSetUnordered({n0}), 0, -1, 1};
         NodeSetUnordered F(begin(N), end(N));
 
         // Connect in dynamic connectivity structure
         for (auto v: F) {
             for (auto w: g.neighbors(v)) {
                 if (F.count(w) != 0) {
-                    conn.insert(v, w);
+                    con.insert(v, w);
                 }
             }
         }
@@ -735,11 +835,11 @@ namespace Geometry {
         // Maintain set of representatives of components
         NodeSetUnordered R;
         for (auto v: F) {
-            R.insert(conn.get_representative(v));
+            R.insert(con.get_representative(v));
         }
         vector<int> Rsizes;
         for (auto v: R) {
-            Rsizes.push_back(conn.get_size(v));
+            Rsizes.push_back(con.get_size(v));
         }
 
         // We will need node sets for the connected components of the front.
@@ -752,7 +852,7 @@ namespace Geometry {
         NodeID last_n = AMGraph3D::InvalidNodeID; // Very last node added to separator.
         // Now, proceed by expanding a sphere
         while (R.size() == 1 || front_size_ratio(Rsizes) < quality_noise_level) {
-            if (growth_threshold != -1 && Sigma.size() >= growth_threshold) return {0.0, NodeSet()};
+            if (growth_threshold != -1 && Sigma.size() >= growth_threshold) return {0.0, NodeSetUnordered()};
 
             // Find the node in front closest to the center
             const NodeID n = *min_element(begin(F), end(F), [&](NodeID a, NodeID b) {
@@ -760,11 +860,13 @@ namespace Geometry {
             });
 
             // Update the sphere centre and radius to contain the new point.
-            const Vec3d p_n = g.pos[n];
-            double l = length(centre - p_n);
-            if (l > radius) {
-                radius = 0.5 * (radius + l);
-                centre = p_n + radius * (centre - p_n) / (1e-30 + length(centre - p_n));
+            if(static_centre != nullptr) {
+                const Vec3d p_n = g.pos[n];
+                double l = length(centre - p_n);
+                if (l > radius) {
+                    radius = 0.5 * (radius + l);
+                    centre = p_n + radius * (centre - p_n) / (1e-30 + length(centre - p_n));
+                }
             }
 
             // Now, remove n from F and put it in Sigma.
@@ -779,12 +881,11 @@ namespace Geometry {
                 F.insert(m);
                 for (auto w: g.neighbors(m)) {
                     if (F.count(w) == 0) continue;
-                    conn.insert(m, w);
+                    con.insert(m,w);
                 }
             }
-
             // Remove edges connecting n to front
-            conn.remove(n,g.neighbors(n));
+            con.remove(n,g.neighbors(n));
 
             // Maintain representatives
             NodeSetUnordered Rnew;
@@ -794,11 +895,11 @@ namespace Geometry {
 
             // Make R'=rep(R)
             for (auto v: R) {
-                Rnew.insert(conn.get_representative(v));
+                Rnew.insert(con.get_representative(v));
             }
             // Make R'=R' U rep(newly_added)
             for (auto m: g.neighbors(n)) {
-                if (F.count(m) > 0) Rnew.insert(conn.get_representative(m));
+                if (F.count(m) > 0) Rnew.insert(con.get_representative(m));
             }
 
             // Set R=R'
@@ -807,37 +908,24 @@ namespace Geometry {
             // Keep sizes of components in Rsizes for front-size-double, NodeSetratio
             Rsizes.clear();
             for (auto v: R) {
-                Rsizes.push_back(conn.get_size(v));
+                Rsizes.push_back(con.get_size(v));
             }
 
             // If the front is empty, we must have included an entire
             // connected component in "separator". Bail!
             if (F.size() == 0)
-                return {0.0, NodeSet()};
+                return {0.0, NodeSetUnordered()};
         }
-
-        // Collect actual components for further processing
-        C_F = connected_components(g, F);
-        uint size_before_shrink = Sigma.size();
-        shrink_separator(g, Sigma, C_F, centre, optimization_steps);
-        C_F = front_components(g, Sigma); // TODO: shrinking could be made to return the new front components.
-
-        // Compute quality.
-        uint min = -1;
-        uint max = 0;
-        for (const auto &c: C_F) {
-            auto temp = c.size();
-            if (temp < min) min = temp;
-            if (temp > max) max = temp;
-        }
-        double quality = (double) min / max;
 
         // We have to check if the local separator is in fact split into two
-        // components. If so, get rid of it.
+        /* components. If so, get rid of it.
         if (connected_components(g, Sigma).size() > 1)
             return {0.0, NodeSet()};
+        */
 
-        return {quality, order(Sigma), 0, -1, size_before_shrink};
+        //if(growth_threshold != -1 && Sigma.size() < growth_threshold/3) return {0.0,NodeSet()};
+
+        return shrink_separator(g, Sigma, centre, optimization_steps);
     }
 
 
@@ -881,7 +969,7 @@ namespace Geometry {
                     cnt += 1;
                     auto sep = local_separator(g, n, quality_noise_level, optimization_steps);
                     // Store in pair to conserve compatibility.
-                    std::pair<double, NodeSet> ns(sep.quality, sep.sigma);
+                    std::pair<double, NodeSet> ns(sep.quality, order(sep.sigma));
                     if (ns.second.size() > 0) {
                         nsv.push_back(ns);
                         for (auto m: ns.second)
@@ -923,9 +1011,13 @@ namespace Geometry {
         return node_set_vec_global;
     }
 
-    NodeSetVec multiscale_local_separators(AMGraph3D &g, SamplingType sampling, uint grow_threshold,double quality_noise_level, int optimization_steps) {
+    NodeSetVec multiscale_local_separators(AMGraph3D &g, SamplingType sampling,const uint grow_threshold,double quality_noise_level, int optimization_steps) {
         // Because we are greedy: all cores belong to this task!
-        const int CORES = thread::hardware_concurrency();
+        //const unsigned int CORES = std::min(8u,thread::hardware_concurrency());
+
+        //TODO: Consider output formatting ie. outputting compile-time options
+        std::cout<<"CORES: "<<CORE_TEST<<", CORES_SEC: "<<CORE_TEST_SEC<<", ";
+        std::cout<<"THICC_SEP: "<<THICC_SEP<<", MULTI_SHRINK: "<<MULTI_SHRINK<<", RECALC: "<<RECALC<<std::endl;
 
         Util::AttribVec<NodeID, uint> touched(g.no_nodes(), 0);
 
@@ -936,28 +1028,35 @@ namespace Geometry {
         long time_creating_separators = 0, time_shrinking = 0, time_expanding = 0, time_packing = 0, time_filtering = 0;
         auto timer = hrc::now();
 
-        vector<thread> threads(CORES);
+        vector<thread> threads(CORE_TEST);
 
         // Each core will have its own vector of Separators in which to store
         // separators.
-        vector<vector<Separator> > separator_vv(CORES);
-        auto create_separators = [&](int core, const AMGraph3D &g) {
+        vector<vector<Separator> > separator_vv(CORE_TEST);
+        auto create_separators = [&](const int core, const AMGraph3D &g, const int level) {
             auto &separator_v = separator_vv[core];
-            for (auto n: g.node_ids()) {
-                double probability = 1.0 / int_pow(2.0, touched[n]);
-                if (n % CORES == core && (sampling==SamplingType::None || rand() <= probability * RAND_MAX)) {
+            const size_t chunk_size = (g.no_nodes()+CORE_TEST-1)/CORE_TEST;
+            for (size_t i=core*chunk_size; i<(core+1)*chunk_size && i<g.no_nodes(); ++i) {
+                double probability = 1.0 / int_pow(2.0, touched[i]);
+                if (sampling==SamplingType::None || rand() <= probability * RAND_MAX) {
                     ++count_computed;
-                    auto separator = local_separator(g, n, quality_noise_level, optimization_steps,
+                    auto separator = local_separator(g, i, quality_noise_level, optimization_steps,
                                                                 grow_threshold);
                     if (separator.sigma.size() > 0) {
-                        separator.id = count_found;
-                        ++count_found;
-                        separator_v.push_back(separator);
-                        if (sampling!=SamplingType::None) {
-                            for (auto m: separator.sigma) {
-                                touched[m]++;
+                        SepVec adjsep = MULTI_SHRINK ? adjacent_separators(g,separator.sigma) : SepVec();
+                        uint c = 0;
+                        do{
+                            separator.id = count_found;
+                            separator.grouping = count_found;
+                            ++count_found;
+                            separator_v.push_back(separator);
+                            if (sampling!=SamplingType::None) {
+                                for (auto m: separator.sigma) {
+                                    touched[m]++;
+                                }
                             }
-                        }
+                            if(c < adjsep.size()) separator = adjsep[c++];
+                        } while(c<adjsep.size());
                     }
                 }
             }
@@ -968,63 +1067,48 @@ namespace Geometry {
                 const vector<Separator> &node_set_vec_global,
                 const AMGraph3D &g_current,
                 const AMGraph3D &g_next,
-                const vector<vector<NodeID>> &exp_map_current) {
+                const vector<vector<NodeID>> &exp_map_current,
+                const int level) {
             auto &current_level_separator_vec = separator_vv[core];
-            for (unsigned int i = 0; i < node_set_vec_global.size(); i++) {
+            const size_t chunk_size = (node_set_vec_global.size()+CORE_TEST_SEC-1)/CORE_TEST_SEC;
+            for (unsigned int i = core*chunk_size; i < (core+1)*chunk_size && i < node_set_vec_global.size(); i++) {
                 const auto &sep = node_set_vec_global[i];
-                if (i % CORES == core) {
-                    auto local_timer = hrc::now();
+                auto local_timer = hrc::now();
 
-                    // Do not include if separator is a leaf. Leaves in the input graph is still included since we do not expand on that level.
-                    if (sep.sigma.size() == 1 && g_current.neighbors(*sep.sigma.begin()).size() == 1) {
-                        continue;
-                    }
-
-                    // Expand.
-
-                    set<NodeID> expanded_sep;
-                    for (NodeID old_v: sep.sigma) {
-                        for (NodeID new_v: exp_map_current[old_v]) expanded_sep.insert(new_v);
-                    }
-
-                    time_expanding += (hrc::now() - local_timer).count(); // TODO: This might be a race condition.
-                    local_timer = hrc::now();
-
-                    // Shrink.
-
-                    // Convert to NodeSetUnordered. Unordered set is needed for some functions.
-                    NodeSetUnordered Sigma;
-                    for (auto n: expanded_sep) {
-                        Sigma.insert(n);
-                    }
-                    const auto &g_next_level = g_next;
-                    Vec3d centre = approximate_bounding_sphere(g_next_level, Sigma).first;
-                    auto C_F = front_components(g_next_level, Sigma);
-
-                    shrink_separator(g_next_level, Sigma, C_F, centre, optimization_steps);
-
-                    double quality;
-                    C_F = front_components(g_next_level, Sigma);
-
-                    size_t min = -1;
-                    size_t max = 0;
-                    for (const auto &c: C_F) {
-                        if (c.size() < min) min = c.size();
-                        if (c.size() > max) max = c.size();
-                    }
-                    quality = (double) min / max;
-
-                    // Convert to NodeSet.
-                    Separator trimmed_sep = sep; // We do this to copy over new other information stored in the separator.
-                    trimmed_sep.quality = quality;
-                    trimmed_sep.sigma.clear();
-                    for (auto n: Sigma) {
-                        trimmed_sep.sigma.insert(n);
-                        if (sampling==SamplingType::Advanced) touched[n]++;
-                    }
-                    current_level_separator_vec.push_back(trimmed_sep);
-                    time_shrinking += (hrc::now() - local_timer).count(); //TODO: Also race condition.
+                // Do not include if separator is a leaf. Leaves in the input graph is still included since we do not expand on that level.
+                if (sep.sigma.size() == 1 && g_current.neighbors(*sep.sigma.begin()).size() == 1) {
+                    continue;
                 }
+
+                uint old_size = sep.sigma.size();
+
+                // Expand.
+
+                NodeSetUnordered Sigma;
+                for (NodeID old_v: sep.sigma) {
+                    for (NodeID new_v: exp_map_current[old_v]) Sigma.insert(new_v);
+                }
+
+                for(uint j=0;j<THICC_SEP;j++) thicken_separator(g_next,Sigma);
+
+                //time_expanding += (hrc::now() - local_timer).count(); // TODO: This might be a race condition.
+                //local_timer = hrc::now();
+
+                // Shrink.
+
+                Vec3d centre = approximate_bounding_sphere(g_next, Sigma).first;
+
+                Separator trimmed_sep;
+
+                if(RECALC == 1 || (RECALC == 2 && level == 1)) trimmed_sep = local_separator(g_next,*Sigma.cbegin(),quality_noise_level,optimization_steps,-1,&centre);
+                else trimmed_sep = shrink_separator(g_next, Sigma, centre, optimization_steps);
+                trimmed_sep.grouping = sep.grouping;
+                current_level_separator_vec.push_back(trimmed_sep);
+                if(sampling==SamplingType::Advanced){
+                    for(auto n: trimmed_sep.sigma) touched[n]++;
+                }
+
+                time_shrinking += (hrc::now() - local_timer).count(); //TODO: Also race condition.
             }
         };
 
@@ -1042,15 +1126,13 @@ namespace Geometry {
             const auto &exp_map_current = msg.expansion_map_vec[level];
 
             // Determine separators
-            for (int i = 0; i < CORES; ++i)
-                threads[i] = thread(create_separators, i, g_current);
+            for (int i = 0; i < CORE_TEST; ++i)
+                threads[i] = thread(create_separators, i, g_current,level);
 
-            for (int i = 0; i < CORES; ++i)
-                threads[i].join();
+            for (auto& t: threads) t.join();
 
             for (auto &separator_v: separator_vv)
                 for (auto &sep: separator_v) {
-                    sep.grouping = level;
                     separator_vector_global.push_back(sep);
                 }
 
@@ -1080,13 +1162,16 @@ namespace Geometry {
             if (level != 0) { // Nothing to expand to on final level.
                 //touched = (g.no_nodes(),0);
 
-                for (int i = 0; i < CORES; ++i)
+                timer = hrc::now();
+                for (int i = 0; i < CORE_TEST_SEC; ++i)
                     threads[i] = thread(shrink_expand, i, separator_vector_global, g_current, msg.layers[level - 1],
-                                        exp_map_current);
+                                        exp_map_current,level);
 
-                for (int i = 0; i < CORES; ++i)
+                for (int i = 0; i < CORE_TEST_SEC; ++i){
                     threads[i].join();
+                }
 
+                time_expanding += (hrc::now() - timer).count();
                 separator_vector_global.clear();
                 for (const auto &sep_v: separator_vv)
                     for (const auto &sep: sep_v) {
@@ -1109,9 +1194,9 @@ namespace Geometry {
         cout << "Packed " << count_packed << " separators" << endl;
         cout << "#####################" << endl;
         cout << "Building multilayer graph: " << (t2 - t1).count() * 1e-9 << endl;
-        cout << "Creating separators: " << (t3 - t2).count() * 1e-9 << endl;
-        cout << "#####################" << endl;
-        cout << "Creating initial separators: " << time_creating_separators * 1e-9 << endl;
+        //cout << "Creating separators: " << (t3 - t2).count() * 1e-9 << endl;
+        //cout << "#####################" << endl;
+        cout << "Searching for restricted separators: " << time_creating_separators * 1e-9 << endl;
         cout << "Packing separators: " << time_packing * 1e-9 << endl;
         cout << "Expanding separators: " << time_expanding * 1e-9 << endl;
         cout << "Shrinking separators: " << time_shrinking * 1e-9 << endl;
@@ -1122,7 +1207,15 @@ namespace Geometry {
         // selection.
         NodeSetVec node_set_color_vec;
         for (const auto &sep: separator_vector_global) {
-            node_set_color_vec.push_back(make_pair(sep.quality, sep.sigma));
+            node_set_color_vec.push_back(make_pair(sep.quality, order(sep.sigma)));
+            if(sep.sigma.size()<15){
+                cout << "Found small sep from lvl "<<sep.grouping<<" size "<<sep.sigma.size()<<endl;
+                //Geometry::graph_save("msg"+ to_string(sep.grouping)+".graph",msg.layers[sep.grouping]);
+            }
+        }
+        int i=0;
+        for(const auto &graph: msg.layers){
+            //Geometry::graph_save("../msg"+ to_string(i++)+".graph",graph);
         }
 
         color_graph_node_sets(g, node_set_color_vec);
@@ -1130,7 +1223,7 @@ namespace Geometry {
         return sepvec_to_nsv(separator_vector_global);
     }
 
-    MultiScaleGraph multiscale_graph(const AMGraph3D &g, int threshold, bool recursive) {
+    MultiScaleGraph multiscale_graph(const AMGraph3D &g, const uint threshold, bool recursive) {
         MultiScaleGraph msg;
 
         msg.layers = std::vector<AMGraph3D>();
@@ -1138,33 +1231,34 @@ namespace Geometry {
         msg.capacity_vec_vec = CapacityVecVec();
 
         AMGraph3D graph_current;
-        size_t edges_to_remove = 0;
+        size_t vertex_target;
         size_t vertex_count;
-
-        Util::AttribVec<NodeID, int> touched;
-        priority_queue<SkeletonPQElem> Q;
 
 
         auto graph_decimate = [&](const AMGraph3D& g, size_t to_remove)->AMGraph3D {
-            auto priority = [&](const NodeID& a, const NodeID& b)->double {return -g.sqr_dist(a,b);};
             AMGraph3D g_temp = g;
             auto map_temp = vector<vector<NodeID>>(g.no_nodes());
 
-            int total_work = 0;
-            bool did_work;
-            do{
-                did_work = false;
-                if(Q.empty()) {
-                    for (auto n0: g_temp.node_ids()) {
-                        for (auto n1: g_temp.neighbors(n0)) {
-                            double pri = priority(n0, n1);
-                            Q.push(SkeletonPQElem(pri, n0, n1));
-                        }
-                    }
-                    touched = (g_temp.no_nodes(),0);
-                }
+            Util::AttribVec<NodeID, int> touched(g.no_nodes(),0);
+            priority_queue<SkeletonPQElem> Q;
 
-                while(total_work < to_remove && !Q.empty()){
+            int total_work = 0;
+            bool did_work = true;
+
+            while(total_work < to_remove || !did_work){
+                did_work = false;
+                touched.clear();
+                for (auto n0: g_temp.node_ids()) {
+                    for (auto n1: g_temp.neighbors(n0)) {
+                        if(n1>n0) continue; // Only visit edge a,b a<b and not b,a
+                        double pri = -g.sqr_dist(n0, n1);
+                        Q.push(SkeletonPQElem(pri, n0, n1));
+                    }
+                }
+                //cout << "Q was empty now has "<<Q.size()<<endl;
+
+                //cout << "Looping tw: "<<total_work<<", tr: "<<to_remove<<", Q: "<<Q.size()<<endl;
+                while(!Q.empty()){
                     auto skel_rec = Q.top();
                     Q.pop();
                     if(touched[skel_rec.n0] == 0 && touched[skel_rec.n1] == 0) { // Merge vertices
@@ -1182,7 +1276,9 @@ namespace Geometry {
                         }
                     }
                 }
-            } while (total_work < to_remove && did_work);
+            }
+
+            //cout << "Finished decimate tw: "<<total_work<<", tr: "<<to_remove<<", dw: "<<did_work<<endl;
             auto map_result = vector<vector<NodeID>>(g.no_nodes() - total_work);
             auto cap_result = vector<size_t>(g.no_nodes() - total_work, 0);
 
@@ -1240,19 +1336,20 @@ namespace Geometry {
             msg.capacity_vec_vec[0][i] = 1;
         }
 
-        while (graph_current.no_nodes() > threshold) {
+        vertex_target = g.no_nodes();
+
+        while (vertex_target > threshold) {
             vertex_count = graph_current.no_nodes();
-            if (recursive) {
-                edges_to_remove = min(graph_current.no_nodes() / 2, graph_current.no_nodes() - threshold);
-                graph_current = graph_decimate(graph_current,edges_to_remove);
-            } else {
-                edges_to_remove = min(edges_to_remove + (graph_current.no_nodes() / 2),
-                                      g.no_nodes() - threshold);
-                graph_current = graph_decimate(g, edges_to_remove);
+            vertex_target = vertex_count/2;
+            graph_current = graph_decimate(graph_current,graph_current.no_nodes()-vertex_target);
+            if (vertex_count == graph_current.no_nodes()){
+                //cout << "Early return no edges to remove" <<endl;
+                //cout << "Wanted to remove "<<edges_to_remove<<" from graph with "<<vertex_count<<" vertices but failed"<<endl;
+                break; // Was unable to remove any edges.
             }
-            if (vertex_count == graph_current.no_nodes()) break; // Was unable to remove any edges.
 
             msg.layers.push_back(graph_current);
+
 
         }
 
