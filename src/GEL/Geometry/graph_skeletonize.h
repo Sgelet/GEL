@@ -11,11 +11,13 @@
 
 #include <GEL/Util/AttribVec.h>
 #include <GEL/Geometry/Graph.h>
+#include "GEL/CGLA/Vec3d.h"
 
 namespace Geometry {
 
     using NodeID = AMGraph::NodeID;
     using NodeSet = AMGraph::NodeSet;
+    using NodeSetUnordered = std::unordered_set<NodeID>;
     using NodeSetVec = std::vector<std::pair<double, NodeSet>>;
     using AttribVecDouble = Util::AttribVec<NodeID, double>;
     using ExpansionMap = std::vector<std::vector<AMGraph::NodeID>>;
@@ -26,14 +28,14 @@ namespace Geometry {
     struct Separator {
         size_t id = 0; // Mostly used for debugging.
         double quality = -1.0;
-        NodeSet sigma;
+        NodeSetUnordered sigma;
         // Any grouping can be used but usually refers to the level where the separator was found.
         mutable int grouping = -1; // Is mutable so it can be updated while filtering.
         uint growth_measure = 0; // The size of sigma before shrinking.
 
         Separator() = default;
 
-        Separator(double quality, const NodeSet &node_set, size_t id = 0, int grouping = -1, uint growth_measure = 0) {
+        Separator(double quality, const NodeSetUnordered &node_set, size_t id = 0, int grouping = -1, uint growth_measure = 0) {
             this->quality = quality;
             this->sigma = node_set;
             this->id = id;
@@ -60,7 +62,7 @@ namespace Geometry {
      * half the size of the previous layer. Using recursive affects how the simplification can be reversed
      * with the expansion map.
      */
-    MultiScaleGraph multiscale_graph(const AMGraph3D &g, int threshold, bool recursive);
+    MultiScaleGraph multiscale_graph(const AMGraph3D &g, uint threshold, bool recursive);
 
     /**
      @brief Compute separators by marching a front along a scalar field.
@@ -91,7 +93,7 @@ namespace Geometry {
      */
     Separator
     local_separator(const AMGraph3D &g, NodeID n0, double quality_noise_level, int optimization_steps,
-                    uint growth_threshold = -1);
+                    uint growth_threshold = -1, const CGLA::Vec3d* static_centre = nullptr);
 
 
     enum class SamplingType {

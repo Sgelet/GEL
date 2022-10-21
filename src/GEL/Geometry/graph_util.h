@@ -86,7 +86,7 @@ namespace Geometry {
 
     /** Convert a node set from unordered representation to ordered. This makes it possible to count the number of shared
      nodes in linear time. */
-    NodeSet order(NodeSetUnordered& s);
+    NodeSet order(const NodeSetUnordered& s);
 
     /// This function computes the neighbors of s in g. In other words it returns the set of nodes that are connected to s but do not belong to s.
     NodeSetUnordered neighbors(const AMGraph3D& g, const NodeSetUnordered& s);

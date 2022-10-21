@@ -73,9 +73,9 @@ namespace Geometry {
 
 
 
-    NodeSet order(NodeSetUnordered& s) {
+    NodeSet order(const NodeSetUnordered& s) {
         NodeSet _s;
-        for(auto n : s)
+        for(const auto n : s)
             _s.insert(n);
         return _s;
     }
