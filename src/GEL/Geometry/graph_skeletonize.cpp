@@ -1208,14 +1208,6 @@ namespace Geometry {
         NodeSetVec node_set_color_vec;
         for (const auto &sep: separator_vector_global) {
             node_set_color_vec.push_back(make_pair(sep.quality, order(sep.sigma)));
-            if(sep.sigma.size()<15){
-                cout << "Found small sep from lvl "<<sep.grouping<<" size "<<sep.sigma.size()<<endl;
-                //Geometry::graph_save("msg"+ to_string(sep.grouping)+".graph",msg.layers[sep.grouping]);
-            }
-        }
-        int i=0;
-        for(const auto &graph: msg.layers){
-            //Geometry::graph_save("../msg"+ to_string(i++)+".graph",graph);
         }
 
         color_graph_node_sets(g, node_set_color_vec);
