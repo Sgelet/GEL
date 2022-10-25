@@ -9,9 +9,7 @@ declare -a variations=(
   "-DTHICC_SEP=1 -DRECALC=2"
 )
 
-# Build default
-#/usr/bin/cmake --build ../cmake-build-default --target skeltal -j 6
-
+variant=0
 
 for i in "${variations[@]}"
 do
@@ -20,5 +18,5 @@ do
   cmake --build ../cmake-build-default
 
   # Run
-  ls -1 /work3/etoga/3DMeshes/[^0-9]* | ./runtime_test.sh 3 $i
+  ls -1 /work3/etoga/3DMeshes/[^0-9]* | ./runtime_test.sh 3 "var$((++variant))"
 done
