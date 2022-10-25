@@ -20,5 +20,5 @@ do
   cmake --build ../cmake-build-default
 
   # Run
-  ls -1 /work3/etoga/3DMeshes/[^0-9]* | ./runtime_test.sh 3
+  ls -1 /work3/etoga/3DMeshes/[^0-9]* | ./runtime_test.sh 3 $i
 done
