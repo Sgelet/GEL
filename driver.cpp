@@ -120,16 +120,17 @@ int main(int argc, char* argv[]){
 
     if(!out_path.empty()) Geometry::graph_save(out_path,skel);
 
-    // monocolored skeleton.
+    /* monocolored skeleton.
     auto node_color = CGLA::Vec3f(0.0, 0.0, 0.0);
     for (auto n:skel.node_ids()) {
         skel.node_color[n] = node_color;
     }
+    */
 
-    auto [genus, leafs] = count_topology(skel);
-    std::cout << "Genus: "<<genus<<"\nLeafs: "<<leafs<<std::endl;
-    std::cout << "#####################" << std::endl;
-
+    //auto [genus, leafs] = count_topology(skel);
+    //std::cout << "Genus: "<<genus<<"\nLeafs: "<<leafs<<std::endl;
+    //std::cout << "#####################" << std::endl;
+    /*
     if (view_mode != "NONE") {
         // Show stuff. // Only SKEL and MODEL works for graph inputs i.e. cannot show model when input is a graph.
         auto viewer = GLManifoldViewer_new();
@@ -155,6 +156,6 @@ int main(int argc, char* argv[]){
             }
         }
     }
-
+    */
     return 0;
 }
