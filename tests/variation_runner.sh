@@ -10,8 +10,8 @@ declare -a variations=(
 
 variant=0
 
-mkdir out_raw
-mkdir skeletons
+mkdir -p out_raw
+mkdir -p skeletons
 
 for i in "${variations[@]}"
 do
@@ -20,7 +20,7 @@ do
   cmake --build ../cmake-build-default
 
   # Make directories
-  mkdir "skeletons/var$((++variant))"
+  mkdir -p "skeletons/var$((++variant))"
 
   # Run
   ls -1 /work3/etoga/3DMeshes/[^0-9]* | ./runtime_test.sh 3 "var$variant"
