@@ -59,7 +59,7 @@ do
   mkdir -p "skeletons/var$((++variant))"
 
   # Run
-  ls -1 data/3DMeshes/[^0-9]* | ./runtime_test.sh 3 "var$variant"
+  ls -1 /work3/etoga/3DMeshes/[^0-9]* | ./runtime_test.sh 3 "var$variant"
 done
 
 # Cleanup
