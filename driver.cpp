@@ -111,7 +111,7 @@ int main(int argc, char* argv[]){
     if (!success) std::cout << "ERROR : Graph is empty!" << std::endl;
 
     std::cout << "Generating skeleton: " <<path<<" saved at "<<out_path<< std::endl;
-    std::cout << "Vertices: "<<g.no_nodes()<<"\n Edges: "<<g.no_edges()<<std::endl;
+    std::cout << "Vertices: "<<g.no_nodes()<<"\nEdges: "<<g.no_edges()<<std::endl;
     std::cout << "#####################" << std::endl;
 
     // Make skeleton
