@@ -32,6 +32,6 @@ module load gcc/12.1.0-binutils-2.38 ninja/1.10.2 cmake/3.23.2
 rm -rf ../cmake-build-default
 rm -f out_raw/*
 export CC=gcc
-unzip 3dmeshes.zip -d /work3/etoga/
+unzip -o 3dmeshes.zip -d /work3/etoga/
 ./variation_runner.sh
 rm -f /work3/etoga/3DMeshes/*
