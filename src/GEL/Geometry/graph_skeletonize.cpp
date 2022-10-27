@@ -935,7 +935,7 @@ namespace Geometry {
                                 uint advanced_sampling_threshold) {
 
         // Because we are greedy: all cores belong to this task!
-        const int CORES = thread::hardware_concurrency();
+        const int CORES = CORE_TEST;//thread::hardware_concurrency();
 
         // touched will help us keep track of how many separators use a given node.
         Util::AttribVec<NodeID, int> touched(g.no_nodes(), 0);
@@ -1015,8 +1015,10 @@ namespace Geometry {
         // Because we are greedy: all cores belong to this task!
         //const unsigned int CORES = std::min(8u,thread::hardware_concurrency());
 
+        const int CORES = CORE_TEST;//thread::hardware_concurrency();
+
         //TODO: Consider output formatting ie. outputting compile-time options
-        std::cout<<"CORES: "<<CORE_TEST<<", CORES_SEC: "<<CORE_TEST_SEC<<", ";
+        std::cout<<"CORES: "<<CORES<<", CORES_SEC: "<<CORE_TEST_SEC<<", ";
         std::cout<<"THICC_SEP: "<<THICC_SEP<<", MULTI_SHRINK: "<<MULTI_SHRINK<<", RECALC: "<<RECALC<<std::endl;
 
         Util::AttribVec<NodeID, uint> touched(g.no_nodes(), 0);
@@ -1028,14 +1030,14 @@ namespace Geometry {
         long time_creating_separators = 0, time_shrinking = 0, time_expanding = 0, time_packing = 0, time_filtering = 0;
         auto timer = hrc::now();
 
-        vector<thread> threads(CORE_TEST);
+        vector<thread> threads(CORES);
 
         // Each core will have its own vector of Separators in which to store
         // separators.
-        vector<vector<Separator> > separator_vv(CORE_TEST);
+        vector<vector<Separator> > separator_vv(CORES);
         auto create_separators = [&](const int core, const AMGraph3D &g, const int level) {
             auto &separator_v = separator_vv[core];
-            const size_t chunk_size = (g.no_nodes()+CORE_TEST-1)/CORE_TEST;
+            const size_t chunk_size = (g.no_nodes()+CORES-1)/CORES;
             for (size_t i=core*chunk_size; i<(core+1)*chunk_size && i<g.no_nodes(); ++i) {
                 double probability = 1.0 / int_pow(2.0, touched[i]);
                 if (sampling==SamplingType::None || rand() <= probability * RAND_MAX) {
@@ -1118,6 +1120,8 @@ namespace Geometry {
 
         auto t2 = hrc::now();
 
+        std::cout<<"MSG created: "<<msg.layers.size()<<" levels total"<<std::endl;
+
         vector<Separator> separator_vector_global;
 
         for (int level = msg.layers.size() - 1; level >= 0; --level) {
@@ -1125,11 +1129,15 @@ namespace Geometry {
             const auto &g_current = msg.layers[level];
             const auto &exp_map_current = msg.expansion_map_vec[level];
 
+            std::cout << "Finding separators on lvl "<<level<<std::endl;
+
             // Determine separators
-            for (int i = 0; i < CORE_TEST; ++i)
+            for (int i = 0; i < CORES; ++i)
                 threads[i] = thread(create_separators, i, g_current,level);
 
             for (auto& t: threads) t.join();
+
+            std::cout << "Separators found"<<std::endl;
 
             for (auto &separator_v: separator_vv)
                 for (auto &sep: separator_v) {

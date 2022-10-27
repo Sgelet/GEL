@@ -5,13 +5,13 @@
 ### -- set the job Name --
 #BSUB -J Skeletonization
 ### -- ask for number of cores (default: 1) --
-#BSUB -n 32
+#BSUB -n 16
 ### -- specify that the cores must be on the same host --
 #BSUB -R "span[hosts=1]"
 ### -- specify that we need 2GB of memory per core/slot --
 #BSUB -R "rusage[mem=1GB]"
 ### -- Request specific CPU
-#BSUB -R "select[model == XeonGold6226R]"
+##BSUB -R "select[model == XeonGold6226R]"
 ### -- specify that we want the job to get killed if it exceeds 3 GB per core/slot --
 #BSUB -M 3GB
 ### -- set walltime limit: hh:mm --
@@ -39,9 +39,6 @@ unzip -o 3dmeshes.zip -d /work3/etoga/
 # Variations to run
 declare -a variations=(
   ""
-  "-DTHICC_SEP=1"
-  "-DRECALC=2"
-  "-DTHICC_SEP=1 -DRECALC=2"
 )
 
 variant=0
