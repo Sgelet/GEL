@@ -5,7 +5,7 @@
 ### -- set the job Name --
 #BSUB -J Skeletonization
 ### -- ask for number of cores (default: 1) --
-#BSUB -n 4
+#BSUB -n 32
 ### -- specify that the cores must be on the same host --
 #BSUB -R "span[hosts=1]"
 ### -- specify that we need 2GB of memory per core/slot --
@@ -59,7 +59,7 @@ do
   mkdir -p "skeletons/var$((++variant))"
 
   # Run
-  ls -1 /work3/etoga/3DMeshes/[^0-9]* | ./runtime_test.sh 3 "var$variant"
+  ls -1 /work3/etoga/3DMeshes/arm* | ./runtime_test.sh 3 "var$variant"
 done
 
 # Cleanup
