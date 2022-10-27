@@ -40,10 +40,11 @@ unset MALLOC_ARENA_MAX
 
 # Variations to run
 declare -a variations=(
-  "-DCORE_TEST=8"
-  "-DCORE_TEST=16"
-  "-DCORE_TEST=32"
-  "-DCORE_TEST=64"
+  "-DMULTI_SCALE=0"
+  ""
+  "-DTHICC_SEP=1"
+  "-DTHICC_SEP=1 -DRECOMP=2"
+  "-DRECOMP=2"
 )
 
 variant=0
@@ -54,7 +55,7 @@ mkdir -p skeletons
 for i in "${variations[@]}"
 do
   # Build with compile time option
-  cmake -G Ninja -DCMAKE_MAKE_PROGRAM=ninja -DCMAKE_CXX_FLAGS="$i -O2 -DCORE_TEST_SEC=2" -S .. -B ../cmake-build-default -DCMAKE_BUILD_TYPE=Release
+  cmake -G Ninja -DCMAKE_MAKE_PROGRAM=ninja -DCMAKE_CXX_FLAGS="$i -O2 -DCORE_TEST=8 -DCORE_TEST_SEC=2" -S .. -B ../cmake-build-default -DCMAKE_BUILD_TYPE=Release
   cmake --build ../cmake-build-default
 
   # Make directories
