@@ -21,7 +21,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")
 endif ()
 
-option(Use_GLGraphics "Compile the OpenGL Viewer" ON)
+option(Use_GLGraphics "Compile the OpenGL Viewer" OFF)
 if (Use_GLGraphics)
     find_package(OpenGL REQUIRED)
     include(FetchContent)
@@ -96,5 +96,5 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/GEL
     FILES_MATCHING PATTERN "*.h"
     )
 
-add_executable(skeltal driver.cpp)
+add_executable(skeltal headless_driver.cpp)
 target_link_libraries(skeltal GEL PyGEL)
