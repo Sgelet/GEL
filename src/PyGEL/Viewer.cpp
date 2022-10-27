@@ -266,7 +266,7 @@ void GLManifoldViewer::display_init() {
     else {
         double radd;
         tie(ctr,radd) = approximate_bounding_sphere(*display_parameters.g_ptr);
-        rad = radd;
+        rad = radd*1.2;
     }
     int W,H,WF,HF;
     glfwGetWindowSize(window, &W, &H);

@@ -30,7 +30,14 @@ namespace GLGraphics
         // simple example, though, so that is left as an exercise.
         ballsize = 2.0f;
         screen_centre = Vec2i(width/2, height/2);
-        qrot = Quatf(0.0, 0.0, 0.0, 1.0);
+        //qrot = Quatf(0.0, 0.0, 0.0, 1.0);
+        // HORSE.ply
+        //qrot = Quatf(0.34839,-0.57466,-0.56961,0.473204);
+        // FERTILITY.ply
+        //qrot = Quatf(0.183254,0.0751819,-0.187114,-0.962153);
+        // HEPTOROID.ply
+        //qrot = Quatf(0.539942,-0.279694,-0.0466687,-0.792483);
+        qrot = Quatf(-0.00815559,-0.0115461,-0.0154806,-1.);
         qinc = Quatf(0.0, 0.0, 0.0, 1.0);
         trans = Vec2f(0.0, 0.0);
     }
@@ -71,6 +78,7 @@ namespace GLGraphics
                 break;
         }
         last_pos = w;
+        std::cout<<qrot<<std::endl;
     }
     
     // Call this when the user does a mouse down.

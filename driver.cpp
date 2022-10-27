@@ -82,9 +82,9 @@ int main(int argc, char* argv[]){
     bool success;
     auto g = Graph();
 
-    std::string path = "../package/fertility.off";
+    std::string path = "../tests/msg3.graph";
     std::string out_path;
-    std::string view_mode = "NONE";
+    std::string view_mode = "MODEL";
     std::string alt_model = "../package/wood_statue.off";   // A different model to show in case the input is a graph. Really only used with wsv.
 
     if(argc >= 2) path = argv[1];
@@ -120,17 +120,24 @@ int main(int argc, char* argv[]){
 
     if(!out_path.empty()) Geometry::graph_save(out_path,skel);
 
-    /* monocolored skeleton.
+    // monocolored skeleton.
     auto node_color = CGLA::Vec3f(0.0, 0.0, 0.0);
     for (auto n:skel.node_ids()) {
         skel.node_color[n] = node_color;
     }
-    */
+
+    // monocolored skeleton.
+    for (auto n:g.node_ids()) {
+        g.node_color[n] = node_color;
+    }
+    for (auto n: g.edge_ids()) {
+        g.edge_color[n] = node_color;
+    }
 
     //auto [genus, leafs] = count_topology(skel);
     //std::cout << "Genus: "<<genus<<"\nLeafs: "<<leafs<<std::endl;
     //std::cout << "#####################" << std::endl;
-    /*
+
     if (view_mode != "NONE") {
         // Show stuff. // Only SKEL and MODEL works for graph inputs i.e. cannot show model when input is a graph.
         auto viewer = GLManifoldViewer_new();
@@ -150,12 +157,12 @@ int main(int argc, char* argv[]){
             GLManifoldViewer_display(viewer, 0, reinterpret_cast<Graph_ptr>(&g), 'x', true, bg_color, 0, false, false);
         } else if (view_mode == "MODEL") {
             if (graph_is_mesh) {
-                GLManifoldViewer_display(viewer, reinterpret_cast<Manifold_ptr>(&m), 0, 'w', true, bg_color, 0, false, false);
+                GLManifoldViewer_display(viewer, reinterpret_cast<Manifold_ptr>(&m), 0, 'n', true, bg_color, 0, false, false);
             } else {
                 GLManifoldViewer_display(viewer, 0, reinterpret_cast<Graph_ptr>(&g), 'x', true, bg_color, 0, false, false);
             }
         }
     }
-    */
+
     return 0;
 }

@@ -45,6 +45,9 @@ using namespace Geometry;
 #ifndef CORE_TEST_SEC
 #define CORE_TEST_SEC 1
 #endif
+#ifndef RANDOM_COARSEN
+#define RANDOM_COARSEN 0
+#endif
 
 namespace Geometry {
 
@@ -1166,6 +1169,10 @@ namespace Geometry {
                 touched[i] = 0;
             }
 
+            // Save graph
+            //graph_save("msg"+ to_string(level)+".graph",g_current);
+            //std::cout << "Saving msg"<<level<<".graph"<<std::endl;
+
             // Expand and shrink.
             if (level != 0) { // Nothing to expand to on final level.
                 //touched = (g.no_nodes(),0);
@@ -1251,7 +1258,9 @@ namespace Geometry {
                 for (auto n0: g_temp.node_ids()) {
                     for (auto n1: g_temp.neighbors(n0)) {
                         if(n1>n0) continue; // Only visit edge a,b a<b and not b,a
-                        double pri = -g.sqr_dist(n0, n1);
+                        double pri;
+                        if constexpr(RANDOM_COARSEN) pri = (double)rand()/((double) RAND_MAX);
+                        else pri = -g.sqr_dist(n0, n1);
                         Q.push(SkeletonPQElem(pri, n0, n1));
                     }
                 }

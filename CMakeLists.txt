@@ -96,5 +96,5 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/GEL
     FILES_MATCHING PATTERN "*.h"
     )
 
-add_executable(skeltal headless_driver.cpp)
+add_executable(skeltal driver.cpp)
 target_link_libraries(skeltal GEL PyGEL)

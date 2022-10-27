@@ -40,9 +40,10 @@ unset MALLOC_ARENA_MAX
 
 # Variations to run
 declare -a variations=(
-  "-DMULTISCALE=0"
   ""
+  "-DRANDOM_COARSEN=1"
   "-DTHICC_SEP=1"
+  "-DRANDOM_COARSEN=1 -DTHICC_SEP=1"
   "-DTHICC_SEP=1 -DRECALC=2"
   "-DRECALC=2"
 )
