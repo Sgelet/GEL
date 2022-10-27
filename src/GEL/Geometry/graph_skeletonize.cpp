@@ -1120,7 +1120,7 @@ namespace Geometry {
 
         auto t2 = hrc::now();
 
-        std::cout<<"MSG created: "<<msg.layers.size()<<" levels total"<<std::endl;
+        //std::cout<<"MSG created: "<<msg.layers.size()<<" levels total"<<std::endl;
 
         vector<Separator> separator_vector_global;
 
@@ -1129,7 +1129,7 @@ namespace Geometry {
             const auto &g_current = msg.layers[level];
             const auto &exp_map_current = msg.expansion_map_vec[level];
 
-            std::cout << "Finding separators on lvl "<<level<<std::endl;
+            //std::cout << "Finding separators on lvl "<<level<<std::endl;
 
             // Determine separators
             for (int i = 0; i < CORES; ++i)
@@ -1137,7 +1137,7 @@ namespace Geometry {
 
             for (auto& t: threads) t.join();
 
-            std::cout << "Separators found"<<std::endl;
+            //std::cout << "Separators found"<<std::endl;
 
             for (auto &separator_v: separator_vv)
                 for (auto &sep: separator_v) {
@@ -1245,7 +1245,7 @@ namespace Geometry {
             int total_work = 0;
             bool did_work = true;
 
-            while(total_work < to_remove || !did_work){
+            while(total_work < to_remove && did_work){
                 did_work = false;
                 touched.clear();
                 for (auto n0: g_temp.node_ids()) {

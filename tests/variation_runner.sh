@@ -2,8 +2,6 @@
 
 # Variations to run
 declare -a variations=(
-  "-DCORE_TEST=2"
-  "-DCORE_TEST=4"
   "-DCORE_TEST=8"
 )
 
@@ -22,5 +20,5 @@ do
   mkdir -p "skeletons/var$((++variant))"
 
   # Run
-  ls -1 data/3DMeshes/arm* | ./runtime_test.sh 3 "var$variant"
+  ls -1 data/3DMeshes/asian* | ./runtime_test.sh 3 "var$variant"
 done

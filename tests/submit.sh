@@ -40,7 +40,10 @@ unset MALLOC_ARENA_MAX
 
 # Variations to run
 declare -a variations=(
-  ""
+  "-DCORE_TEST=8"
+  "-DCORE_TEST=16"
+  "-DCORE_TEST=32"
+  "-DCORE_TEST=64"
 )
 
 variant=0
@@ -51,14 +54,14 @@ mkdir -p skeletons
 for i in "${variations[@]}"
 do
   # Build with compile time option
-  cmake -G Ninja -DCMAKE_MAKE_PROGRAM=ninja -DCMAKE_CXX_FLAGS="$i -O2 -DCORE_TEST=$LSB_DJOB_NUMPROC -DCORE_TEST_SEC=2" -S .. -B ../cmake-build-default -DCMAKE_BUILD_TYPE=Release
+  cmake -G Ninja -DCMAKE_MAKE_PROGRAM=ninja -DCMAKE_CXX_FLAGS="$i -O2 -DCORE_TEST_SEC=2" -S .. -B ../cmake-build-default -DCMAKE_BUILD_TYPE=Release
   cmake --build ../cmake-build-default
 
   # Make directories
   mkdir -p "skeletons/var$((++variant))"
 
   # Run
-  ls -1 /work3/etoga/3DMeshes/arm* | ./runtime_test.sh 3 "var$variant"
+  ls -1 /work3/etoga/3DMeshes/* | ./runtime_test.sh 3 "var$variant"
 done
 
 # Cleanup
