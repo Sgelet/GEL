@@ -36,7 +36,7 @@ rm -f out_raw/*
 export CC=gcc
 unzip -o 3dmeshes.zip -d /work3/etoga/
 
-unset $MALLOC_ARENA_MAX
+unset MALLOC_ARENA_MAX
 
 # Variations to run
 declare -a variations=(
