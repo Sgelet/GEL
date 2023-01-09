@@ -13,7 +13,10 @@
 #include "GEL/Geometry/DynCon.h"
 
 #ifndef MULTISCALE
-#define MULTISCALE 1
+#define MULTISCALE 0
+#endif
+#ifndef ALPHA
+#define ALPHA 64
 #endif
 
 using Graph = Geometry::AMGraph3D;
@@ -24,7 +27,7 @@ void skeletonize(Graph &g, Graph* skel_ptr, SamplingType sampling){
     auto t0 = std::chrono::high_resolution_clock::now();
 
     Geometry::NodeSetVec seps;
-    if constexpr (MULTISCALE) seps = Geometry::multiscale_local_separators(g,sampling,64,0.13);
+    if constexpr (MULTISCALE) seps = Geometry::multiscale_local_separators(g,sampling,ALPHA,0.13);
     else seps = Geometry::local_separators(g,SamplingType::Basic);
 
     auto t1 = std::chrono::high_resolution_clock::now();
@@ -87,8 +90,10 @@ int main(int argc, char* argv[]){
     std::string view_mode = "MODEL";
     std::string alt_model = "../package/wood_statue.off";   // A different model to show in case the input is a graph. Really only used with wsv.
 
+    int option = 0;
     if(argc >= 2) path = argv[1];
     if(argc >= 3) out_path = argv[2];
+    if(argc >= 4) option = std::stoi(argv[3]);
 
     bool graph_is_mesh = false;
 
@@ -107,18 +112,22 @@ int main(int argc, char* argv[]){
         g = Geometry::graph_load(path);
     }
 
-    success = !g.empty();
-    if (!success) std::cout << "ERROR : Graph is empty!" << std::endl;
-
-    std::cout << "Generating skeleton: " <<path<<" saved at "<<out_path<< std::endl;
-    std::cout << "Vertices: "<<g.no_nodes()<<"\nEdges: "<<g.no_edges()<<std::endl;
-    std::cout << "#####################" << std::endl;
-
-    // Make skeleton
     auto skel = Geometry::AMGraph3D(); // Target graph
-    skeletonize(g,&skel,SamplingType::Advanced);
+    if(option < 1) {
+        success = !g.empty();
+        if (!success) std::cout << "ERROR : Graph is empty!" << std::endl;
 
-    if(!out_path.empty()) Geometry::graph_save(out_path,skel);
+        std::cout << "Generating skeleton: " << path << " saved at " << out_path << std::endl;
+        std::cout << "Vertices: " << g.no_nodes() << "\nEdges: " << g.no_edges() << std::endl;
+        std::cout << "#####################" << std::endl;
+
+        // Make skeleton
+        skeletonize(g, &skel, SamplingType::Advanced);
+
+        //if (!out_path.empty()) Geometry::graph_save(out_path, skel);
+    } else {
+       skel = Geometry::graph_load(out_path);
+    }
 
     // monocolored skeleton.
     auto node_color = CGLA::Vec3f(0.0, 0.0, 0.0);
@@ -126,13 +135,6 @@ int main(int argc, char* argv[]){
         skel.node_color[n] = node_color;
     }
 
-    // monocolored skeleton.
-    for (auto n:g.node_ids()) {
-        g.node_color[n] = node_color;
-    }
-    for (auto n: g.edge_ids()) {
-        g.edge_color[n] = node_color;
-    }
 
     //auto [genus, leafs] = count_topology(skel);
     //std::cout << "Genus: "<<genus<<"\nLeafs: "<<leafs<<std::endl;

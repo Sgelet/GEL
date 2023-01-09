@@ -181,14 +181,6 @@ namespace Geometry {
                 if(r==-1){t = l; return;}
                 if(l==-1){t = r; return;}
 
-
-                //std::cout<<"Joining: "<<std::endl;
-                //verify_children(l);
-                //std::cout<<std::endl<<"and: "<<std::endl;
-                //verify_children(r);
-                //std::cout<<std::endl;
-
-
                 size_t root;
                 bool go_r = v[l].priority > v[r].priority;
                 bool went_r = go_r;
@@ -234,19 +226,9 @@ namespace Geometry {
                     if (went_r) make_rc(r, root);
                     else make_lc(r, root);
                 }
-
-                //std::cout<<"Join produced: "<<std::endl;
-                //verify_children(t);
-                //std::cout<<std::endl;
-
             }
 
             void t_split(size_t t, size_t &l, size_t &r) {
-
-                //std::cout<<"Splitting: "<<std::endl;
-                //verify_children(find_representative(t));
-                //std::cout<<std::endl;
-
                 l = lc(t);
                 r = t;
                 disc_lc(t);
@@ -271,12 +253,6 @@ namespace Geometry {
                     went_r = going_r;
                 }
                 update_data(t);
-                //std::cout << "Split has L: "<<std::endl;
-                //verify_children(l);
-                //std::cout<<std::endl<<"Split has R: "<<std::endl;
-                //verify_children(r);
-                //std::cout<<std::endl;
-
             }
 
         public:
@@ -300,10 +276,7 @@ namespace Geometry {
 
             size_t find_representative(size_t t) {
                 if(t==-1) return -1;
-                while (has_p(t)) {
-                    //std::cout << "("<<t->u<<","<<t->v << ")-";
-                    t = p(t);
-                }
+                while (has_p(t)) t = p(t);
                 return t;
             }
 
@@ -338,7 +311,6 @@ namespace Geometry {
                     res = p(t);
                 }
                 v[t].l = v[t].r = v[t].p = -1;
-                //verify_children(find_representative(res));
                 return find_representative(res);
             }
 
@@ -387,6 +359,12 @@ namespace Geometry {
         public:
             explicit EulerTourForest(DynCon::Sequence& _stw) : stw(_stw){}
 
+            size_t get_or_add(T u){
+                auto t_u = find_tree(u);
+                if(t_u == -1) t_u = add(u,u);
+                return t_u;
+            }
+
             size_t add(T u, T v){
                 size_t t = stw.add(u,v);
                 v_map[std::pair<T, T>(u, v)] = t;
@@ -404,15 +382,8 @@ namespace Geometry {
             }
 
             size_t link(T u, T v) {
-                size_t t_u = find_tree(u);
-                size_t t_v = find_tree(v);
-
-                if (t_u == -1) t_u = add(u,u);
-                if (t_v == -1) t_v = add(v,v);
-
-                //stw.splay(t_u);
-                //stw.splay(t_v);
-                //if (stw.p(t_u) == t_v || (stw.has_p(t_u) && stw.p(stw.p(u)) == t_v)) return t_v;
+                size_t t_u = get_or_add(u);
+                size_t t_v = get_or_add(v);
 
                 if(stw.find_representative(t_u) == stw.find_representative(t_v)) return t_v;
 
@@ -442,7 +413,6 @@ namespace Geometry {
                 size_t t_retreat = s_retreat->second;
 
                 stw.split(t_advance, J, L);
-                //L = stw.rc(L);
                 L = stw.remove_first(t_advance);
                 v_map.erase(s_advance);
 
@@ -454,19 +424,8 @@ namespace Geometry {
                     L = stw.remove_first(t_retreat);
                 }
 
-                //stw.remove_first(t_retreat);
                 v_map.erase(s_retreat);
-                /*
-                std::cout << "J: "<<std::endl;
-                stw.verify_children(J);
-                std::cout<<std::endl;
-                std::cout << "K: "<<std::endl;
-                stw.verify_children(K);
-                std::cout<<std::endl;
-                std::cout << "L: "<<std::endl;
-                stw.verify_children(L);
-                std::cout<<std::endl;
-                */
+
                 A = K;
                 stw.join(B, J, L);
             }
@@ -477,9 +436,6 @@ namespace Geometry {
 
                 if (!(t_u!=-1 && t_v!=-1)) return false;
 
-                //stw.splay(t_u);
-                //stw.splay(t_v);
-                //return (stw.p(t_u) == t_v || (stw.has_p(t_u) && stw.p(stw.p(t_u)) == t_v));
                 return stw.find_representative(t_u) == stw.find_representative(t_v);
             }
 
@@ -504,6 +460,8 @@ namespace Geometry {
 
         std::unordered_map<UndirectedEdge, size_t, UndirectedEdgeHash> edgeSet;
         std::vector<UndirectedEdge> ev;
+
+        std::multiset<size_t> t_sizes;
 
         Sequence stw = Sequence(64);
 
@@ -613,7 +571,7 @@ namespace Geometry {
                         T candidate = *iter;
                         iter++;
                         auto c_e = edgeSet.find(UndirectedEdge(stw.access(current).u, candidate))->second;
-                        if (stw.find_representative(forest.find_tree(candidate)) != V) { // Non-tree edge goes to W
+                        if (stw.find_representative(forest.find_tree(candidate)) == W) { // Non-tree edge goes to W
                             disconnect_nontree(c_e);
                             replacement = c_e;
                             forest.link(ev[c_e].first, ev[c_e].second);
@@ -637,6 +595,15 @@ namespace Geometry {
             }
         }
 
+        // Inserts vertex v
+        int insert(T v){
+            auto index = forest.find_tree(v);
+            if(index != -1) return index;
+
+            t_sizes.insert(1);
+            return forest.add(v,v);
+        }
+
         // Insert the edge going from v to w
         int insert(T v, T w) {
             // Swap v and w so that an edge (v, w) is the same as (w, v).
@@ -651,8 +618,16 @@ namespace Geometry {
             ev.emplace_back(UndirectedEdge(v,w));
             edgeSet[ev[e]] = e;
 
+            insert(v);
+            insert(w);
+
             // if v & w disconnected in F_0 -> insert as tree edge in F_0.
             if (!is_connected(v, w)) {
+                auto size_v = get_size(v);
+                auto size_w = get_size(w);
+                t_sizes.insert(size_v+size_w);
+                t_sizes.erase(t_sizes.find(size_v));
+                t_sizes.erase(t_sizes.find(size_w));
                 forest.link(v, w);
                 return 2;
             } else { // Add as non-tree otherwise
@@ -662,25 +637,36 @@ namespace Geometry {
         }
 
         // Returns false if no replacement edge found
-        bool remove(T v, T w) {
-            if(!disconnect(v,w)) return true;
-            return reconnect(v,w);
+        void remove(T v, T w) {
+            if(!disconnect(v,w)) return;
+            reconnect(v,w);
         }
 
         // Batch removes every edge adjacent to given vertex
         // Returns false if neighbourhood was not reconnected
-        bool remove(T v, const std::vector<T>& adj){
+        void remove(T v, const std::vector<T>& adj){
             std::vector<T> adj_tree;
+            t_sizes.erase(t_sizes.find(get_size(v)));
             for(auto w: adj){
-                if(disconnect(v,w)) adj_tree.push_back(w);
-            }
-            uint reconnected = 0;
-            for(uint i=0; i<adj_tree.size(); ++i){
-                for(uint j=i+1; j<adj_tree.size(); ++j){
-                    if(reconnect(adj_tree[i],adj_tree[j])) reconnected++;
+                if(disconnect(v,w)){
+                    t_sizes.insert(get_size(w));
+                    adj_tree.push_back(w);
                 }
             }
-            return reconnected == adj_tree.size();
+            for(std::vector<size_t> remaining; adj_tree.size() > 1; remaining.clear()){
+                size_t size = get_size(adj_tree[0]);
+                t_sizes.erase(t_sizes.find(size));
+                for(int i = 1; i<adj_tree.size();++i){
+                    size_t temp = get_size(adj_tree[i]);
+                    if(!is_connected(adj_tree[0],adj_tree[i]) && reconnect(adj_tree[0],adj_tree[i])){
+                        size += temp;
+                        t_sizes.erase(t_sizes.find(temp));
+                    }
+                    else remaining.push_back(adj_tree[i]);
+                }
+                t_sizes.insert(size);
+                adj_tree = remaining;
+            }
         }
 
         // Returns true if there exists a path going between v and w.
@@ -705,6 +691,11 @@ namespace Geometry {
             size_t rep = forest.find_tree(v);
             if (rep == -1) return 1;
             return (stw.access(stw.find_representative(rep)).size + 2) / 3;
+        }
+
+        double front_size_ratio(){
+            if(t_sizes.size() < 2) return 0.0;
+            return (double) *t_sizes.begin() / *t_sizes.rbegin();
         }
 
         void print_tree(T v) {

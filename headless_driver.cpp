@@ -5,6 +5,7 @@
 #include <PyGEL/graph_functions.h>
 #include "GEL/Geometry/graph_io.h"
 #include "GEL/Geometry/Graph.h"
+#include "GEL/Geometry/graph_util.h"
 
 #include "GEL/HMesh/Manifold.h"
 #include "chrono"
@@ -12,7 +13,10 @@
 #include "GEL/Geometry/DynCon.h"
 
 #ifndef MULTISCALE
-#define MULTISCALE 1
+#define MULTISCALE 0
+#endif
+#ifndef ALPHA
+#define ALPHA 64
 #endif
 
 using Graph = Geometry::AMGraph3D;
@@ -23,7 +27,7 @@ void skeletonize(Graph &g, Graph* skel_ptr, SamplingType sampling){
     auto t0 = std::chrono::high_resolution_clock::now();
 
     Geometry::NodeSetVec seps;
-    if constexpr (MULTISCALE) seps = Geometry::multiscale_local_separators(g,sampling,64,0.13);
+    if constexpr (MULTISCALE) seps = Geometry::multiscale_local_separators(g,sampling,ALPHA,0.13);
     else seps = Geometry::local_separators(g,SamplingType::Basic);
 
     auto t1 = std::chrono::high_resolution_clock::now();
@@ -48,18 +52,51 @@ void graph_from_mesh(HMesh::Manifold* m, Geometry::AMGraph3D* g) {
 }
 
 // Count Leaf nodes and cycles
-std::pair<uint,uint> count_topology(Geometry::AMGraph3D& g){
+std::pair<long long ,std::pair<long long ,long long>> count_topology(Geometry::AMGraph3D& g){
     // Nr. of chordless cycles/genus of graph
     g.cleanup();
-    uint genus = g.no_edges()-g.no_nodes()+1;
-    uint leafs = 0;
+    long long genus = g.no_edges()-g.no_nodes();
+    long long leafs = 0;
+    long long branches = 0;
+    Geometry::NodeSetUnordered nodes;
     for(auto n: g.node_ids()){
-        if(g.edges(n).size()==1) leafs++;
+        nodes.insert(n);
+        if(g.valence(n)==1) leafs++;
+        else if(g.valence(n)>2) branches++;
     }
-    return {genus,leafs};
+    genus += Geometry::connected_components(g,nodes).size();
+    return {genus,{leafs,branches}};
 }
 
 // Do Haussdorff stuff
+int skeleton_quality(std::string& path, std::string& path_base){
+    auto skel = Geometry::graph_load(path);
+    auto baseline = Geometry::graph_load(path_base);
+    if (skel.empty()) return 1;
+
+    auto [genus , t] = count_topology(skel);
+    auto [leafs, branches] = t;
+    auto [b_genus, b_t] = count_topology(baseline);
+    auto [b_leafs, b_branches] = b_t;
+
+    std::cout << "\t&\t" << (long long)skel.no_nodes()-(long long)baseline.no_nodes();
+    std::cout << "\t&\t" << leafs - b_leafs << "\t&\t" << branches - b_branches << "\t&\t" << genus - b_genus << "\t&\t";
+
+    if(baseline.empty()){
+        std::cout << "-\t&\t- \\\\"<<std::endl;
+        return 1;
+    }
+
+    auto [ avg_ha, max_ha] = Geometry::graph_H_dist(skel, baseline);
+    auto [ avg_hb, max_hb ] = Geometry::graph_H_dist(baseline, skel);
+
+    Geometry::NodeSetUnordered nodes;
+    for(auto n: baseline.node_ids()) nodes.insert(n);
+    auto [b_pos, r] = Geometry::approximate_bounding_sphere(baseline,nodes);
+    std::cout << max_ha/r << "\t&\t" << max_hb/r << " \\\\"<<std::endl;
+
+    return 0;
+}
 
 int main(int argc, char* argv[]){
     bool success;
@@ -72,6 +109,8 @@ int main(int argc, char* argv[]){
 
     if(argc >= 2) path = argv[1];
     if(argc >= 3) out_path = argv[2];
+
+    if(argc >= 4) return skeleton_quality(path, out_path);
 
     bool graph_is_mesh = false;
 
