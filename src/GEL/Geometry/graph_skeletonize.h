@@ -93,7 +93,7 @@ namespace Geometry {
      */
     Separator
     local_separator(const AMGraph3D &g, NodeID n0, double quality_noise_level, int optimization_steps,
-                    uint growth_threshold = -1, const CGLA::Vec3d* static_centre = nullptr);
+                    uint growth_threshold = -1, const CGLA::Vec3d* static_centre = nullptr, long* b_time = nullptr);
 
 
     enum class SamplingType {

@@ -10,7 +10,7 @@
 #include <queue>
 
 namespace Geometry {
-    enum BBT { Splay, Treap };
+    enum BBT { Splay, Treap, BFS};
     template<typename T, BBT TT>
     class DynCon {
     private:

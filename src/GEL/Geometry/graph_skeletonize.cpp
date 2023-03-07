@@ -762,9 +762,11 @@ namespace Geometry {
         return res;
     }
 
+    using hrc = chrono::high_resolution_clock;
     Separator shrink_separator(const AMGraph3D &g,
                           NodeSetUnordered &separator,
-                          const Vec3d &sphere_centre, int opt_steps) {
+                          const Vec3d &sphere_centre, int opt_steps,
+                          long* b_time = nullptr) {
         auto fc = front_components(g,separator);
 
         // Next, we thin out the separator until it becomes minimal (i.e. removing one more node
@@ -773,10 +775,19 @@ namespace Geometry {
 
         auto smpos = g.pos;
         AttribVec<NodeID, double> center_dist;
+
+        auto t0 = hrc::now();
+
         for (auto n: separator)
             center_dist[n] = sqr_length(smpos[n] - sphere_centre);
         smooth_attribute(g, smpos, separator, sqrt(separator.size()));
+
+        if(b_time) b_time[3] += (hrc::now()-t0).count();
+        t0 = hrc::now();
+
         node_set_thinning(g, separator, fc, center_dist);
+
+        if(b_time) b_time[4] += (hrc::now()-t0).count();
 
         for (int iter = 0; iter < opt_steps; ++iter)
             optimize_separator(g, separator, fc);
@@ -784,32 +795,6 @@ namespace Geometry {
         return {separator_quality(g,separator),separator};
     }
 
-    using hrc = chrono::high_resolution_clock;
-    Separator bench_shrink_separator(const AMGraph3D &g,
-                               NodeSetUnordered &separator,
-                               const Vec3d &sphere_centre, int opt_steps, long* measurements) {
-        auto fc = front_components(g,separator);
-
-        // Next, we thin out the separator until it becomes minimal (i.e. removing one more node
-        // would make it cease to be a separator. We remove nodes iteratively and always remove the
-        // last visited nodes first.
-
-        auto smpos = g.pos;
-        AttribVec<NodeID, double> center_dist;
-        auto t_0 = hrc::now();
-        for (auto n: separator)
-            center_dist[n] = sqr_length(smpos[n] - sphere_centre);
-        smooth_attribute(g, smpos, separator, sqrt(separator.size()));
-        measurements[2] += (hrc::now() - t_0).count();
-        t_0 = hrc::now();
-        node_set_thinning(g, separator, fc, center_dist);
-        measurements[3] += (hrc::now() - t_0).count();
-
-        for (int iter = 0; iter < opt_steps; ++iter)
-            optimize_separator(g, separator, fc);
-
-        return {separator_quality(g,separator),separator};
-    }
     NodeSetVec sepvec_to_nsv(const std::vector<Separator>& v){
         NodeSetVec res;
         res.reserve(v.size());
@@ -818,7 +803,80 @@ namespace Geometry {
         }
         return res;
     }
+    Separator old_local_separator(const AMGraph3D &g, NodeID n0, double quality_noise_level, int optimization_steps, long* b_time = nullptr) {
+        auto front_size_ratio = [](const vector<NodeSetUnordered>& fc){
+            if(fc.size() < 2) return 0.0;
+            auto [min,max] = minmax_element(fc.begin(),fc.end(),[](const NodeSetUnordered& l, const NodeSetUnordered& r){return l.size()<r.size();});
+            return double(min->size())/max->size();
+        };
 
+        // Create the separator node set and the temporary node set (used during computation)
+        // The tmp sets are needed because of persistence. Whenever we have had two connected components
+        // in front for a number of iterations = persistence, we go back to the original separator.
+        NodeSetUnordered Sigma({n0});
+
+        // Create the front node set. Note that a leaf node is a separator by definition,
+        // so if there is only one neighbor, we are done here.
+        auto N = g.neighbors(n0);
+        if (N.size() == 0)
+            return {0.0, NodeSetUnordered ()};
+        if (N.size() == 1)
+            return {0.0, NodeSetUnordered({n0}), 0, -1, 1};
+        NodeSetUnordered F(begin(N), end(N));
+
+        // We will need node sets for the connected components of the front.
+        vector<NodeSetUnordered> C_F = connected_components(g, F);
+
+        // Create the initial sphere which is of radius zero centered at the input node.
+        Vec3d centre = g.pos[n0];
+        double radius = 0.0;
+
+        NodeID last_n = AMGraph3D::InvalidNodeID; // Very last node added to separator.
+        // Now, proceed by expanding a sphere
+        while (C_F.size() == 1 || front_size_ratio(C_F) < quality_noise_level) {
+
+            auto t_find0 = hrc::now();
+
+            // Find the node in front closest to the center
+            const NodeID n = *min_element(begin(F), end(F), [&](NodeID a, NodeID b) {
+                return sqr_length(g.pos[a] - centre) < sqr_length(g.pos[b] - centre);
+            });
+
+            auto t_find1 = hrc::now();
+
+            if(b_time) b_time[1] += (t_find1 - t_find0).count();
+
+            // Update the sphere centre and radius to contain the new point.
+            const Vec3d p_n = g.pos[n];
+            double l = length(centre - p_n);
+            if (l > radius) {
+                radius = 0.5 * (radius + l);
+                centre = p_n + radius * (centre - p_n) / (1e-30 + length(centre - p_n));
+            }
+
+            // Now, remove n from F and put it in Sigma.
+            // Add n's neighbours (not in Sigma) to F.
+            last_n = n;
+            F.erase(n);
+            Sigma.insert(n);
+
+            for(auto m: g.neighbors(n))
+                if(Sigma.count(m) == 0)
+                    F.insert(m);
+
+            // If the front is empty, we must have included an entire
+            // connected component in "separator". Bail!
+            if (F.size() == 0)
+                return {0.0, NodeSetUnordered()};
+
+            auto t_con0 = hrc::now();
+            C_F = connected_components(g, F);
+            auto t_con1 = hrc::now();
+            if(b_time) b_time[2] += (t_con1 - t_con0).count();
+        }
+
+        return shrink_separator(g, Sigma, centre, optimization_steps, &b_time[0]);
+    }
     /** For a given graph, g,  and a given node n0, we compute a local separator.
      The algorithm proceeds in a way similar to Dijkstra, finding a set of nodes separator such that there is anoter set of nodes, front,
      connected to separator via edges and front consists of two connected components.
@@ -828,7 +886,7 @@ namespace Geometry {
      The final node set returned is then thinned to the minimal separator.
      */
     Separator local_separator(const AMGraph3D &g, NodeID n0, double quality_noise_level, int optimization_steps,
-                              uint growth_threshold, const Vec3d* static_centre) {
+                              uint growth_threshold, const Vec3d* static_centre, long* b_time) {
 
         // Create dynamic connectivity structure
         DynCon<NodeID, DYNCON> con = DynCon<NodeID,DYNCON>();
@@ -862,17 +920,19 @@ namespace Geometry {
         // Create the initial sphere which is of radius zero centered at the input node.
         Vec3d centre = g.pos[n0];
         double radius = 0.0;
-
         NodeID last_n = AMGraph3D::InvalidNodeID; // Very last node added to separator.
         // Now, proceed by expanding a sphere
         while (con.front_size_ratio() < quality_noise_level) {
             if (growth_threshold != -1 && Sigma.size() >= growth_threshold) return {0.0, NodeSetUnordered()};
 
+            auto t_find0 = hrc::now();
             // Find the node in front closest to the center
             const NodeID n = *min_element(begin(F), end(F), [&](NodeID a, NodeID b) {
                 return sqr_length(g.pos[a] - centre) < sqr_length(g.pos[b] - centre);
             });
+            auto t_find1 = hrc::now();
 
+            if(b_time) b_time[1] += (t_find1 - t_find0).count();
             // Update the sphere centre and radius to contain the new point.
             if(static_centre != nullptr) {
                 const Vec3d p_n = g.pos[n];
@@ -888,7 +948,7 @@ namespace Geometry {
             last_n = n;
             F.erase(n);
             Sigma.insert(n);
-
+            auto t_con0 = hrc::now();
             // Add new edges in front to dynamic connectivity structure
             for (auto m: g.neighbors(n)) {
                 if (Sigma.count(m) != 0 || F.count(m) != 0) continue;
@@ -901,14 +961,16 @@ namespace Geometry {
             }
             // Remove edges connecting n to front
             con.remove(n,g.neighbors(n));
+            auto t_con1 = hrc::now();
 
+            if(b_time) b_time[3] += (t_con1 - t_con0).count();
             // If the front is empty, we must have included an entire
             // connected component in "separator". Bail!
             if (F.size() == 0)
                 return {0.0, NodeSetUnordered()};
         }
-
-        return shrink_separator(g, Sigma, centre, optimization_steps);
+;
+        return shrink_separator(g, Sigma, centre, optimization_steps, b_time);
     }
 
     NodeSetVec local_separators(AMGraph3D &g, SamplingType sampling, double quality_noise_level, int optimization_steps,
@@ -937,6 +999,8 @@ namespace Geometry {
         }
 
         auto t1 = hrc::now();
+
+        vector<long> b_tsv(5*CORES,0);
         // Each core will have its own vector of NodeSets in which to store
         // separators.
         vector<NodeSetVec> nsvv(CORES);
@@ -947,7 +1011,8 @@ namespace Geometry {
                 double probability = 1.0 / int_pow(2.0, touched[n]);
                 if (n % CORES == core && (sampling != SamplingType::Basic || rand() <= probability * RAND_MAX)) {
                     cnt += 1;
-                    auto sep = local_separator(g, n, quality_noise_level, optimization_steps);
+                    auto sep = DYNCON == BFS ? old_local_separator(g,n,quality_noise_level,optimization_steps,&b_tsv[core*5]) : local_separator(g, n, quality_noise_level, optimization_steps,-1,
+                                                                                                                                                nullptr, &b_tsv[core*5]);
                     // Store in pair to conserve compatibility.
                     std::pair<double, NodeSet> ns(sep.quality, order(sep.sigma));
                     if (ns.second.size() > 0) {
@@ -978,12 +1043,26 @@ namespace Geometry {
         auto sep_aft = node_set_vec_global.size();
         auto t3 = hrc::now();
 
+        long t_find = 0;
+        long t_con = 0;
+        long t_order = 0;
+        long t_remove = 0;
+        for(int i=0; i< CORES; ++i){
+            t_find += b_tsv[i*5 + 1];
+            t_con += b_tsv[i*5 + 2];
+            t_order += b_tsv[i*5 + 3];
+            t_remove += b_tsv[i*5 + 4];
+        }
+
         cout << "Computed " << cnt << " separators" << endl;
         cout << "Found " << sep_bef << " separators" << endl;
         cout << "Packed " << sep_aft << " separators" << endl;
         cout << "Finding separators: " << (t2 - t1).count() * 1e-9 << endl;
         cout << "Packing separators: " << (t3 - t2).count() * 1e-9 << endl;
-
+        cout << "T_next: " << t_find * 1e-9 << endl;
+        cout << "T_con: " << t_con * 1e-9 << endl;
+        cout << "T_order: " << t_order * 1e-9 << endl;
+        cout << "T_remove: " << t_remove * 1e-9 << endl;
         // Color the node sets selected by packing, so we can get a sense of the
         // selection.
         color_graph_node_sets(g, node_set_vec_global);
