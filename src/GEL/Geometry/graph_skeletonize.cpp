@@ -34,7 +34,7 @@ using namespace Geometry;
 #define THICC_SEP 0
 #endif
 #ifndef DYNCON
-#define DYNCON Treap
+#define DYNCON BFS
 #endif
 #ifndef RECALC
 #define RECALC 0
@@ -963,7 +963,7 @@ namespace Geometry {
             con.remove(n,g.neighbors(n));
             auto t_con1 = hrc::now();
 
-            if(b_time) b_time[3] += (t_con1 - t_con0).count();
+            if(b_time) b_time[2] += (t_con1 - t_con0).count();
             // If the front is empty, we must have included an entire
             // connected component in "separator". Bail!
             if (F.size() == 0)
