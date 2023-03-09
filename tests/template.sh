@@ -34,4 +34,4 @@ module load gcc/12.1.0-binutils-2.38 ninja/1.10.2 cmake/3.23.2
 export CC=gcc
 
 # Run
-FILENAME | ./runtime_test.sh 3 "FILENAME"
+echo FILENAME | ./runtime_test.sh 3
